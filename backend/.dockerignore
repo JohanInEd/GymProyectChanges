@@ -1,0 +1,23 @@
+# Build artifacts
+**/bin/
+**/obj/
+**/publish/
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Logs and local env
+*.log
+.env
+.env.*
+
+# VCS
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
