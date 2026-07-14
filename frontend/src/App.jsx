@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getRoleLabel, hasPermission } from "./auth.js";
+import { redeemInviteCode } from "./inviteCodeApi.js";
 import AccessManagement from "./components/AccessManagement.jsx";
 import AnalyticsDashboard from "./components/AnalyticsDashboard.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
@@ -735,7 +736,7 @@ export default function App() {
     return { ok: true };
   }
 
-  function handleRegisterGym(form) {
+  async function handleRegisterGym(form, code) {
     const email = form.email.trim().toLowerCase();
 
     if (users.some((user) => user.email === email)) {
@@ -748,6 +749,21 @@ export default function App() {
 
     if (!form.acceptTerms) {
       return { ok: false, message: "Debes aceptar los terminos para continuar." };
+    }
+
+    if (!code) {
+      return { ok: false, message: "Falta el codigo de invitacion." };
+    }
+
+    let redemption;
+    try {
+      redemption = await redeemInviteCode(code);
+    } catch {
+      return { ok: false, message: "No se pudo validar el codigo de invitacion. Intenta de nuevo." };
+    }
+
+    if (!redemption.success) {
+      return { ok: false, message: redemption.message || "El codigo de invitacion no es valido." };
     }
 
     const gymId = crypto.randomUUID();

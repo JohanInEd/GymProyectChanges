@@ -20,6 +20,7 @@ public sealed class GymSaaSDbContext : DbContext
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Attendance> Attendances => Set<Attendance>();
+    public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -128,6 +129,14 @@ public sealed class GymSaaSDbContext : DbContext
                 .HasForeignKey(x => x.SubscriptionId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasQueryFilter(x => _tenantProvider == null || x.TenantId == _tenantProvider.CurrentTenantId);
+        });
+
+        modelBuilder.Entity<InviteCode>(entity =>
+        {
+            entity.ToTable("InviteCodes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(32).IsRequired();
+            entity.HasIndex(x => x.Code).IsUnique();
         });
     }
 }

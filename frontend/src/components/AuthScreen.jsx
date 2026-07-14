@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { getRoleLabel } from "../auth.js";
 import GymRegistrationForm from "./GymRegistrationForm.jsx";
+import InviteCodeGate from "./InviteCodeGate.jsx";
 
 export default function AuthScreen({ users, onLogin, onRegisterGym }) {
-  const [mode, setMode] = useState("login");
+  const hasInviteCodeInUrl = new URLSearchParams(window.location.search).has("code");
+  const [mode, setMode] = useState(hasInviteCodeInUrl ? "code" : "login");
+  const [inviteCode, setInviteCode] = useState("");
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
 
@@ -59,8 +62,19 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
           <div className="lg:hidden">
             <p className="text-xl font-bold text-emerald-600">GymFlow</p>
           </div>
-          {mode === "register" ? (
-            <GymRegistrationForm onRegister={onRegisterGym} onShowLogin={() => setMode("login")} />
+          {mode === "code" ? (
+            <InviteCodeGate
+              onValidated={(code) => {
+                setInviteCode(code);
+                setMode("register");
+              }}
+              onShowLogin={() => setMode("login")}
+            />
+          ) : mode === "register" ? (
+            <GymRegistrationForm
+              onRegister={(form) => onRegisterGym(form, inviteCode)}
+              onShowLogin={() => setMode("login")}
+            />
           ) : (
             <>
               <p className="mt-8 text-xs font-bold uppercase tracking-[0.18em] text-emerald-600 lg:mt-0">Acceso seguro</p>
@@ -107,7 +121,7 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("register");
+                    setMode("code");
                     setError("");
                   }}
                   className="font-bold text-emerald-600 hover:text-emerald-700"

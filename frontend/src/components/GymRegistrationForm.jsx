@@ -34,7 +34,7 @@ export default function GymRegistrationForm({ onRegister, onShowLogin }) {
     setError("");
   }
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
 
     if (form.password !== form.confirmPassword) {
@@ -43,7 +43,7 @@ export default function GymRegistrationForm({ onRegister, onShowLogin }) {
     }
 
     setIsSubmitting(true);
-    const result = onRegister(form);
+    const result = await onRegister(form);
     setIsSubmitting(false);
 
     if (!result.ok) {

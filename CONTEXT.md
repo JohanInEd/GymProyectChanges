@@ -43,12 +43,15 @@ Deployment:
 - `frontend/.dockerignore` excludes `node_modules`, `dist`, `.git`, env files.
 - No build-time env vars needed yet (no `import.meta.env`/`VITE_*` usage in the codebase, no router — the app switches views via in-memory tab state, not URL routes).
 - Verified locally (no Docker available in this dev environment): `npm ci` and `npm run build` both succeed and produce root-relative asset paths (`/assets/...`) in `dist/index.html`, matching the Nginx `root` config.
-- In Coolify this is deployed as its own application (Dockerfile build pack, Base Directory `/frontend`, Ports Exposes `80`), separate from the backend app, per the "keep it separate" decision — deployment not yet triggered as of July 13, 2026.
+- In Coolify this is deployed as its own application ("Front-end Server", Dockerfile build pack, Base Directory `/frontend`, Ports Exposes `80`), separate from the backend app, per the "keep it separate" decision.
+- Deployed and verified live at `https://gymassist.online` (the apex domain; moved here from the backend app on July 13, 2026 so the user-facing dashboard owns the clean domain).
+- Requires a `VITE_API_BASE_URL` environment variable in Coolify marked **Available at Buildtime** (Vite bakes `import.meta.env.VITE_*` values in at `npm run build` time, not runtime), set to the backend app's URL. Without it, `inviteCodeApi.js` calls fail gracefully (relative-path fetch, shows a network-error message) rather than crashing.
 
 Main files:
 
 - `frontend/src/App.jsx`
 - `frontend/src/auth.js`
+- `frontend/src/inviteCodeApi.js`
 - `frontend/src/main.jsx`
 - `frontend/src/index.css`
 - `frontend/tailwind.config.js`
@@ -60,6 +63,7 @@ Main files:
 - `frontend/src/components/CheckInDashboard.jsx`
 - `frontend/src/components/FinancialDashboard.jsx`
 - `frontend/src/components/GymSetup.jsx`
+- `frontend/src/components/InviteCodeGate.jsx`
 - `frontend/src/components/MemberDetail.jsx`
 - `frontend/src/components/MemberProgress.jsx`
 - `frontend/src/components/MembersTable.jsx`
@@ -70,7 +74,13 @@ Main files:
 
 Current UI features:
 
-- Public gym registration from the authentication screen.
+- Public gym registration from the authentication screen, gated by a one-time-use invite code (added July 13, 2026):
+  - Clicking "Registrar gimnasio" shows `InviteCodeGate` first, not the registration form directly.
+  - The gate calls the real backend (`POST /api/invite-codes/validate`, `frontend/src/inviteCodeApi.js`) — this is the first real (non-mock) backend call from the frontend. Requires `VITE_API_BASE_URL` set at Docker build time (see Deployment below); without it the check always fails gracefully with a network-error message.
+  - If the page loads with a `?code=XYZ` query param, `AuthScreen` starts directly in the code-gate mode and auto-validates immediately, so a shared invite link passes through with no typing required. Otherwise the user enters a code manually.
+  - Once validated, the code is held in memory (not yet marked used) and the existing gym/owner registration form appears.
+  - The code is only actually consumed on final submit: `handleRegisterGym` in `App.jsx` is now async and calls `POST /api/invite-codes/redeem` (atomic compare-and-swap on the backend) before creating the local gym/owner records; if redemption fails (already used, invalid), registration is aborted with an error and no local gym is created. An abandoned code-gate attempt (validated but never submitted) does not burn the code.
+  - Backend invite codes are a standalone, non-tenant-scoped entity (`InviteCode`: Code, IsUsed, CreatedAt, UsedAt) since they must be checkable before any tenant/gym exists.
 - New gym onboarding includes:
   - Gym name and city.
   - Owner name, email, phone, and password.
@@ -246,6 +256,7 @@ Main backend files:
 - `backend/src/API/Controllers/DashboardController.cs`
 - `backend/src/API/Controllers/CheckInController.cs`
 - `backend/src/API/Controllers/SubscriptionController.cs`
+- `backend/src/API/Controllers/InviteCodesController.cs`
 - `backend/src/API/GymSaaS.Api.csproj`
 - `backend/src/API/Program.cs`
 - `backend/src/API/appsettings.json`
@@ -255,6 +266,7 @@ Main backend files:
 - `backend/src/Application/DTOs/Dashboard/*`
 - `backend/src/Application/DTOs/CheckIns/*`
 - `backend/src/Application/DTOs/Subscriptions/*`
+- `backend/src/Application/DTOs/InviteCodes/*`
 - `backend/src/Application/Payments/*`
 - `backend/src/Application/Services/IMembershipStatusService.cs`
 - `backend/src/Application/Services/MembershipStatusService.cs`
@@ -263,7 +275,8 @@ Main backend files:
 - `backend/src/Domain/Enums/*`
 - `backend/src/Infrastructure/DependencyInjection.cs`
 - `backend/src/Infrastructure/Persistence/GymSaaSDbContext.cs`
-- `backend/src/Infrastructure/Persistence/SqlServerOptions.cs`
+- `backend/src/Infrastructure/Persistence/PostgresOptions.cs`
+- `backend/src/Infrastructure/Persistence/Migrations/*`
 - `backend/src/Infrastructure/Tenancy/HeaderTenantProvider.cs`
 
 Backend domain entities:
@@ -274,6 +287,7 @@ Backend domain entities:
 - `Subscription`
 - `Payment`
 - `Attendance`
+- `InviteCode` (not tenant-scoped, no `ITenantScoped`/query filter — must be checkable before any Gym/tenant exists)
 
 Multi-tenant structure:
 
@@ -285,6 +299,13 @@ Multi-tenant structure:
 - `Attendance` stores entry and optional exit timestamps for allowed visits.
 - `CheckInController` exposes `POST /api/check-ins`, `POST /api/check-ins/check-out`, and `GET /api/check-ins/recent`.
 - The backend rejects a second active entry and has a filtered unique index per tenant/member.
+
+Invite codes (added July 13, 2026):
+
+- `InviteCodesController` exposes `POST /api/invite-codes/validate` (read-only check, `{ code }` -> `{ isValid }`) and `POST /api/invite-codes/redeem` (`{ code }` -> `{ success, message }`, atomic `ExecuteUpdateAsync` compare-and-swap that sets `IsUsed`/`UsedAt` only if still unused). Both are intentionally anonymous (no `[Authorize]`) since they run before any account/tenant exists.
+- Codes are matched case-insensitively (trimmed + upper-invariant) against `InviteCodes.Code`.
+- No admin endpoint exists to generate codes (deliberately, to avoid an unauthenticated way to mint unlimited codes and defeat the capacity cap); codes are seeded directly into Postgres as needed.
+- CORS is now configured (`Cors:AllowedOrigins` in appsettings, wired via `AddCors`/`UseCors` in `Program.cs`) since the frontend calls this API cross-origin for the first time. Production allows `https://gymassist.online`; add more origins there (not code changes) if needed.
 
 PostgreSQL structure added:
 
@@ -305,7 +326,10 @@ Important backend note:
 - `GymSaaS.Api.csproj` and `Program.cs` are committed; `dotnet build` succeeds with 0 errors after the PostgreSQL switch.
 - `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable PostgreSQL server at the `DefaultConnection` string.
 - The frontend does not call the backend yet (still frontend-only mock data), so a missing database does not block using the app.
-- Deployment: a self-hosted Coolify instance has this repo's `backend/` wired up as a Dockerfile-based application (Base Directory `/backend`), plus a separate PostgreSQL database resource, both provisioned but not yet started/deployed as of July 13, 2026. The real connection string/credentials live only in Coolify's Environment Variables for that app, never in this repo (the GitHub repo is public).
+- An initial EF Core migration (`InitialCreate`, under `backend/src/Infrastructure/Persistence/Migrations/`) covers all six entities; `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
+- Deployment: a self-hosted Coolify instance ("Back-end Server") has this repo's `backend/` wired up as a Dockerfile-based application (Base Directory `/backend`, Ports Exposes `8080`), plus a separate PostgreSQL database resource, both running as of July 13, 2026. The real connection string/credentials live only in Coolify's Environment Variables for that app, never in this repo (the GitHub repo is public).
+- Verified live end-to-end on July 13, 2026: the migration applied automatically on deploy (all tables + indexes created, including the Postgres-syntax filtered unique index on `Attendances`), and `/api/check-ins/recent` returns `200 []` with a tenant header.
+- Domain: `https://gymassist.online` was reassigned to the frontend app (see Frontend > Deployment), so the backend now runs on Coolify's auto-generated domain, currently `http://rtd0nqdvy8gwlo6zwwrtigtr.67.207.90.99.sslip.io`. No DNS wildcard exists for `*.gymassist.online` (confirmed via `nslookup`), so a subdomain like `api.gymassist.online` would need an A record added at the registrar before it could be used here.
 
 ## Git Status Notes
 
