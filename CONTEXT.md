@@ -1,6 +1,6 @@
 # Project Context
 
-Workspace path: `D:\GYM`
+Workspace path: `D:\Original Gym\GymProyectChanges-develop`
 
 ## Goal
 
@@ -10,8 +10,8 @@ Gym management SaaS with multi-tenant backend structure and a React/Tailwind adm
 
 - Backend: C# ASP.NET Core Web API, Entity Framework Core, SQL Server structure.
 - Frontend: React + Vite + Tailwind CSS.
-- GitHub repo: `https://github.com/JohanInEd/GymRepos.git`
-- Current development branch: `develop`
+- GitHub repo: `https://github.com/JohanInEd/GymProyectChanges.git`
+- Current development branch: `main`
 
 ## Frontend
 
@@ -277,38 +277,40 @@ Multi-tenant structure:
 - `CheckInController` exposes `POST /api/check-ins`, `POST /api/check-ins/check-out`, and `GET /api/check-ins/recent`.
 - The backend rejects a second active entry and has a filtered unique index per tenant/member.
 
-SQL Server structure added:
+PostgreSQL structure added:
 
-- `appsettings.json` has `ConnectionStrings:DefaultConnection`.
-- `appsettings.Development.json` has local trusted SQL Server example.
+- `appsettings.json` has `ConnectionStrings:DefaultConnection` (Npgsql-format: `Host=...;Port=...;Database=...;Username=...;Password=...`).
+- `appsettings.Development.json` has a local Postgres example (placeholder credentials).
 - `DependencyInjection.cs` registers:
   - `GymSaaSDbContext`
-  - SQL Server provider
+  - PostgreSQL provider via `UseNpgsql` (package `Npgsql.EntityFrameworkCore.PostgreSQL`)
   - `ITenantProvider`
   - `IMembershipStatusService`
   - `IHttpContextAccessor`
+- `PostgresOptions` (`Infrastructure/Persistence/PostgresOptions.cs`) configures `EnableSensitiveDataLogging` and `CommandTimeoutSeconds` under the `Postgres` config section.
 - `Program.example.cs` shows how to call `AddInfrastructure(builder.Configuration)`.
+- The backend was originally built for SQL Server and was switched to PostgreSQL on July 13, 2026: package reference, `UseNpgsql`, connection string format, and the `Attendances` filtered-unique-index raw SQL in `GymSaaSDbContext.cs` (was T-SQL bracket/bit syntax `[AccessGranted] = 1`, now `"AccessGranted" = true`). No EF Core migrations exist yet, so nothing needed porting.
 
 Important backend note:
 
-- `GymSaaS.Api.csproj` and `Program.cs` now exist (still untracked in git) and `dotnet build` succeeds with 0 errors.
-- `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable SQL Server at the `DefaultConnection` string in `appsettings.Development.json`. No SQL Server is installed in this dev environment yet.
-- The frontend does not call the backend yet (still frontend-only mock data), so the missing SQL Server does not block using the app.
+- `GymSaaS.Api.csproj` and `Program.cs` are committed; `dotnet build` succeeds with 0 errors after the PostgreSQL switch.
+- `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable PostgreSQL server at the `DefaultConnection` string.
+- The frontend does not call the backend yet (still frontend-only mock data), so a missing database does not block using the app.
+- Deployment: a self-hosted Coolify instance has this repo's `backend/` wired up as a Dockerfile-based application (Base Directory `/backend`), plus a separate PostgreSQL database resource, both provisioned but not yet started/deployed as of July 13, 2026. The real connection string/credentials live only in Coolify's Environment Variables for that app, never in this repo (the GitHub repo is public).
 
 ## Git Status Notes
 
-Relevant project commits:
+This history (`bc260ce` … `2e88a8b`) is from the prior `D:\GYM` / `GymRepos.git` / `develop` workspace and predates this repo's history; it's kept here only as background on prior feature work, not as this repo's log.
 
-- `bc260ce Initial gym SaaS dashboard`
-- `c231be9 Add dismissible membership alerts and SQL Server structure`
-- `aa3a51b Add role access classes and operations`
-- `f7de665 Add member progress and advanced analytics`
-- `2e88a8b Add role-aware product inventory`
+This repo (`GymProyectChanges.git`) history:
+
+- `1ab8650 Create Test` (initial placeholder commit made via the GitHub UI)
+- `8f6a11a Add Gym SaaS dashboard project (frontend + backend)` (imported the full project from the `D:\GYM` workspace onto `main`)
 
 Current branch for ongoing feature work:
 
-- `develop`
-- Local changes pending commit (not yet staged/committed, as of July 6, 2026): `CONTEXT.md`, `frontend/src/App.jsx`, `frontend/src/components/CheckInDashboard.jsx`, `frontend/src/components/ClassSchedule.jsx`, `frontend/src/components/ClientForm.jsx`, `frontend/src/components/FinancialDashboard.jsx`, `frontend/src/components/GymSetup.jsx`, `frontend/src/components/MemberDetail.jsx`, `frontend/src/components/MembershipCalendar.jsx`.
+- `main`
+- As of July 13, 2026: `main` is pushed and in sync with `origin/main` up to `8f6a11a`. Local changes pending commit since then: the SQL Server -> PostgreSQL backend switch (see "Important backend note" above) — `CONTEXT.md`, `backend/src/API/GymSaaS.Api.csproj`, `backend/src/API/appsettings.json`, `backend/src/API/appsettings.Development.json`, `backend/src/Infrastructure/DependencyInjection.cs`, `backend/src/Infrastructure/Persistence/GymSaaSDbContext.cs`, `backend/src/Infrastructure/Persistence/PostgresOptions.cs` (new, replaces deleted `SqlServerOptions.cs`).
 
 Most recent frontend changes:
 
@@ -395,5 +397,5 @@ If the working tree is clean, continue with the next requested feature.
 Paste this instruction:
 
 ```text
-Continue from D:\GYM. Read CONTEXT.md first, then run git status --short. Do not restart from scratch.
+Continue from D:\Original Gym\GymProyectChanges-develop. Read CONTEXT.md first, then run git status --short. Do not restart from scratch.
 ```

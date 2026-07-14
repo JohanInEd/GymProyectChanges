@@ -21,7 +21,7 @@ public static class DependencyInjection
             throw new InvalidOperationException("Connection string 'DefaultConnection' is required.");
         }
 
-        var sqlOptions = configuration.GetSection("SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
+        var postgresOptions = configuration.GetSection("Postgres").Get<PostgresOptions>() ?? new PostgresOptions();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ITenantProvider, HeaderTenantProvider>();
@@ -29,11 +29,11 @@ public static class DependencyInjection
 
         services.AddDbContext<GymSaaSDbContext>(options =>
         {
-            options.UseSqlServer(
+            options.UseNpgsql(
                 connectionString,
-                sqlServer => sqlServer.CommandTimeout(sqlOptions.CommandTimeoutSeconds));
+                npgsql => npgsql.CommandTimeout(postgresOptions.CommandTimeoutSeconds));
 
-            if (sqlOptions.EnableSensitiveDataLogging)
+            if (postgresOptions.EnableSensitiveDataLogging)
             {
                 options.EnableSensitiveDataLogging();
             }
