@@ -36,6 +36,15 @@ npm run build
 The frontend has been validated with `npm run build`.
 The development server was also validated with an HTTP 200 response on June 11, 2026.
 
+Deployment:
+
+- `frontend/Dockerfile` (added July 13, 2026): multi-stage build, `node:20-alpine` runs `npm ci` + `npm run build`, then `nginx:1.27-alpine` serves the static `dist/` output. Build context = `./frontend` (same convention as `backend/Dockerfile` and `./backend`).
+- `frontend/nginx.conf`: SPA fallback (`try_files $uri $uri/ /index.html`) plus gzip for text assets. Listens on port 80.
+- `frontend/.dockerignore` excludes `node_modules`, `dist`, `.git`, env files.
+- No build-time env vars needed yet (no `import.meta.env`/`VITE_*` usage in the codebase, no router — the app switches views via in-memory tab state, not URL routes).
+- Verified locally (no Docker available in this dev environment): `npm ci` and `npm run build` both succeed and produce root-relative asset paths (`/assets/...`) in `dist/index.html`, matching the Nginx `root` config.
+- In Coolify this is deployed as its own application (Dockerfile build pack, Base Directory `/frontend`, Ports Exposes `80`), separate from the backend app, per the "keep it separate" decision — deployment not yet triggered as of July 13, 2026.
+
 Main files:
 
 - `frontend/src/App.jsx`
