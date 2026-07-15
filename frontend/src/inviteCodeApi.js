@@ -18,8 +18,3 @@ export async function validateInviteCode(code) {
   const result = await postJson("/api/invite-codes/validate", { code });
   return result.isValid;
 }
-
-export async function redeemInviteCode(code) {
-  const result = await postJson("/api/invite-codes/redeem", { code });
-  return { success: result.success, message: result.message };
-}

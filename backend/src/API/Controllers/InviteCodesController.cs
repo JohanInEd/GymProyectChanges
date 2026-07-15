@@ -1,19 +1,20 @@
+using GymSaaS.Application.Abstractions;
 using GymSaaS.Application.DTOs.InviteCodes;
-using GymSaaS.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace GymSaaS.API.Controllers;
 
 [ApiController]
 [Route("api/invite-codes")]
+[EnableRateLimiting("auth")]
 public sealed class InviteCodesController : ControllerBase
 {
-    private readonly GymSaaSDbContext _dbContext;
+    private readonly IInviteCodeService _inviteCodeService;
 
-    public InviteCodesController(GymSaaSDbContext dbContext)
+    public InviteCodesController(IInviteCodeService inviteCodeService)
     {
-        _dbContext = dbContext;
+        _inviteCodeService = inviteCodeService;
     }
 
     [HttpPost("validate")]
@@ -21,11 +22,7 @@ public sealed class InviteCodesController : ControllerBase
         ValidateInviteCodeRequest request,
         CancellationToken cancellationToken)
     {
-        var normalizedCode = NormalizeCode(request.Code);
-
-        var isValid = await _dbContext.InviteCodes
-            .AsNoTracking()
-            .AnyAsync(code => code.Code == normalizedCode && !code.IsUsed, cancellationToken);
+        var isValid = await _inviteCodeService.IsValidAsync(request.Code, cancellationToken);
 
         return Ok(new ValidateInviteCodeResponse(isValid));
     }
@@ -35,23 +32,8 @@ public sealed class InviteCodesController : ControllerBase
         RedeemInviteCodeRequest request,
         CancellationToken cancellationToken)
     {
-        var normalizedCode = NormalizeCode(request.Code);
+        var result = await _inviteCodeService.RedeemAsync(request.Code, cancellationToken);
 
-        var updatedRows = await _dbContext.InviteCodes
-            .Where(code => code.Code == normalizedCode && !code.IsUsed)
-            .ExecuteUpdateAsync(
-                setters => setters
-                    .SetProperty(code => code.IsUsed, true)
-                    .SetProperty(code => code.UsedAt, DateTimeOffset.UtcNow),
-                cancellationToken);
-
-        if (updatedRows == 0)
-        {
-            return Ok(new RedeemInviteCodeResponse(false, "El codigo no es valido o ya fue utilizado."));
-        }
-
-        return Ok(new RedeemInviteCodeResponse(true, null));
+        return Ok(new RedeemInviteCodeResponse(result.Success, result.Message));
     }
-
-    private static string NormalizeCode(string code) => code.Trim().ToUpperInvariant();
 }

@@ -9,10 +9,13 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
   const [inviteCode, setInviteCode] = useState("");
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    const result = onLogin(form.email.trim().toLowerCase(), form.password);
+    setIsSubmitting(true);
+    const result = await onLogin(form.email.trim().toLowerCase(), form.password);
+    setIsSubmitting(false);
 
     if (!result.ok) {
       setError(result.message);
@@ -55,7 +58,7 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
             </p>
           </div>
 
-          <p className="text-xs text-emerald-100/70">Demo local. La autenticacion productiva requiere el backend y contrasenas cifradas.</p>
+          <p className="text-xs text-emerald-100/70">Los gimnasios registrados usan autenticacion real contra el backend. Las cuentas demo son solo un modo local de exploracion.</p>
         </section>
 
         <section className="max-h-[calc(100vh-5rem)] overflow-y-auto bg-white p-6 text-slate-950 sm:p-10 dark:bg-slate-900 dark:text-white">
@@ -111,8 +114,12 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
               </p>
             ) : null}
 
-            <button type="submit" className="shine-btn h-12 w-full rounded-xl bg-emerald-500 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:-translate-y-0.5 hover:bg-emerald-600 hover:shadow-xl hover:shadow-emerald-500/30 active:translate-y-0">
-              Iniciar sesion
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="shine-btn h-12 w-full rounded-xl bg-emerald-500 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:-translate-y-0.5 hover:bg-emerald-600 hover:shadow-xl hover:shadow-emerald-500/30 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? "Iniciando sesion..." : "Iniciar sesion"}
             </button>
               </form>
 

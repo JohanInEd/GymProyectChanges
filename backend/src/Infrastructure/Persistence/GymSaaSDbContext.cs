@@ -21,6 +21,7 @@ public sealed class GymSaaSDbContext : DbContext
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Attendance> Attendances => Set<Attendance>();
     public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
+    public DbSet<User> Users => Set<User>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -33,6 +34,7 @@ public sealed class GymSaaSDbContext : DbContext
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.Property(x => x.Email).HasMaxLength(254);
+            entity.Property(x => x.City).HasMaxLength(120);
             entity.HasIndex(x => x.Slug).IsUnique();
         });
 
@@ -137,6 +139,22 @@ public sealed class GymSaaSDbContext : DbContext
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Code).HasMaxLength(32).IsRequired();
             entity.HasIndex(x => x.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.ToTable("Users");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Email).HasMaxLength(254).IsRequired();
+            entity.Property(x => x.PasswordHash).HasMaxLength(400).IsRequired();
+            entity.Property(x => x.FullName).HasMaxLength(160).IsRequired();
+            entity.HasIndex(x => x.Email).IsUnique();
+            entity.HasOne(x => x.Gym)
+                .WithMany(x => x.Users)
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Intentionally no HasQueryFilter: login must resolve the tenant from the
+            // email lookup itself, before any tenant context exists (same reasoning as InviteCode).
         });
     }
 }

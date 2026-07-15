@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getRoleLabel, hasPermission } from "./auth.js";
-import { redeemInviteCode } from "./inviteCodeApi.js";
+import { login as authLogin, registerGym as authRegisterGym } from "./authApi.js";
 import AccessManagement from "./components/AccessManagement.jsx";
 import AnalyticsDashboard from "./components/AnalyticsDashboard.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
@@ -495,6 +495,22 @@ function getTrialEndDate() {
   return trialEnd.toISOString();
 }
 
+function toLocalUser(authUser) {
+  return {
+    id: authUser.id,
+    gymId: authUser.tenantId,
+    name: authUser.name,
+    email: authUser.email,
+    role: authUser.role,
+    active: true,
+    isDemo: false,
+  };
+}
+
+function upsertUser(users, user) {
+  return [...users.filter((item) => item.email !== user.email), user];
+}
+
 export default function App() {
   const [registeredGyms, setRegisteredGyms] = useState(loadRegisteredGyms);
   const [users, setUsers] = useState(() => [
@@ -502,6 +518,7 @@ export default function App() {
     ...loadRegisteredGyms().map((gym) => gym.owner),
   ]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
   const [workspaceId, setWorkspaceId] = useState("gym-demo");
   const [onboarding, setOnboarding] = useState({
     status: "active",
@@ -712,17 +729,7 @@ export default function App() {
     setWorkspaceId(user.gymId);
   }
 
-  function handleLogin(email, password) {
-    const user = users.find((item) => item.email === email);
-
-    if (!user || user.password !== password) {
-      return { ok: false, message: "Correo o contrasena incorrectos." };
-    }
-
-    if (!user.active) {
-      return { ok: false, message: "Este usuario esta inactivo. Contacta al propietario." };
-    }
-
+  function signInLocalUser(user) {
     if (workspaceId !== user.gymId) {
       loadWorkspace(user);
     }
@@ -733,52 +740,65 @@ export default function App() {
       { id: "clients", permission: "clients" },
     ].find((item) => hasPermission(user, item.permission));
     setActiveTab(firstTab?.id || "clients");
+  }
+
+  async function handleLogin(email, password) {
+    // Demo accounts and in-session-created staff (frontend.js `handleCreateUser`) are local-only
+    // mock records with a plaintext `password` field and never reach the backend. Any account with
+    // no local `password` (e.g. a real registered gym owner) authenticates against the real API.
+    const localUser = users.find((item) => item.email === email);
+
+    if (localUser && localUser.password !== undefined) {
+      if (localUser.password !== password) {
+        return { ok: false, message: "Correo o contrasena incorrectos." };
+      }
+
+      if (!localUser.active) {
+        return { ok: false, message: "Este usuario esta inactivo. Contacta al propietario." };
+      }
+
+      setAuthToken(null);
+      signInLocalUser(localUser);
+      return { ok: true };
+    }
+
+    let result;
+    try {
+      result = await authLogin(email, password);
+    } catch {
+      return { ok: false, message: "No se pudo conectar con el servidor. Intenta de nuevo." };
+    }
+
+    if (!result.ok) {
+      return { ok: false, message: result.message };
+    }
+
+    const user = toLocalUser(result.user);
+    setAuthToken(result.token);
+    setUsers((current) => upsertUser(current, user));
+    signInLocalUser(user);
     return { ok: true };
   }
 
   async function handleRegisterGym(form, code) {
-    const email = form.email.trim().toLowerCase();
-
-    if (users.some((user) => user.email === email)) {
-      return { ok: false, message: "Ya existe una cuenta con este correo." };
-    }
-
-    if (form.password.length < 8) {
-      return { ok: false, message: "La contrasena debe tener al menos 8 caracteres." };
-    }
-
-    if (!form.acceptTerms) {
-      return { ok: false, message: "Debes aceptar los terminos para continuar." };
-    }
-
     if (!code) {
       return { ok: false, message: "Falta el codigo de invitacion." };
     }
 
-    let redemption;
+    let result;
     try {
-      redemption = await redeemInviteCode(code);
+      result = await authRegisterGym(form, code);
     } catch {
-      return { ok: false, message: "No se pudo validar el codigo de invitacion. Intenta de nuevo." };
+      return { ok: false, message: "No se pudo conectar con el servidor. Intenta de nuevo." };
     }
 
-    if (!redemption.success) {
-      return { ok: false, message: redemption.message || "El codigo de invitacion no es valido." };
+    if (!result.ok) {
+      return { ok: false, message: result.message };
     }
 
-    const gymId = crypto.randomUUID();
-    const owner = {
-      id: crypto.randomUUID(),
-      gymId,
-      name: form.ownerName.trim(),
-      email,
-      password: form.password,
-      role: "owner",
-      active: true,
-      isDemo: false,
-    };
+    const owner = toLocalUser(result.user);
     const registeredGym = {
-      id: gymId,
+      id: owner.gymId,
       profile: {
         gymName: form.gymName.trim(),
         city: form.city.trim(),
@@ -800,12 +820,18 @@ export default function App() {
 
     setRegisteredGyms(updatedGyms);
     saveRegisteredGyms(updatedGyms);
-    setUsers((current) => [...current, owner]);
+    setUsers((current) => upsertUser(current, owner));
+    setAuthToken(result.token);
     loadWorkspace(owner, registeredGym);
     setCurrentUser(owner);
     setActiveTab("setup");
 
     return { ok: true };
+  }
+
+  function handleLogout() {
+    setAuthToken(null);
+    setCurrentUser(null);
   }
 
   function handleCreateUser(user) {
@@ -1448,7 +1474,7 @@ export default function App() {
             </div>
             <button
               type="button"
-              onClick={() => setCurrentUser(null)}
+              onClick={handleLogout}
               className="h-10 w-full rounded-xl text-sm font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/20"
             >
               Cerrar sesion
@@ -1490,7 +1516,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCurrentUser(null)}
+                  onClick={handleLogout}
                   className="flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                 >
                   Salir

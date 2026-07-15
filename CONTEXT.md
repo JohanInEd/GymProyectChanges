@@ -51,6 +51,7 @@ Main files:
 
 - `frontend/src/App.jsx`
 - `frontend/src/auth.js`
+- `frontend/src/authApi.js`
 - `frontend/src/inviteCodeApi.js`
 - `frontend/src/main.jsx`
 - `frontend/src/index.css`
@@ -79,7 +80,7 @@ Current UI features:
   - The gate calls the real backend (`POST /api/invite-codes/validate`, `frontend/src/inviteCodeApi.js`) — this is the first real (non-mock) backend call from the frontend. Requires `VITE_API_BASE_URL` set at Docker build time (see Deployment below); without it the check always fails gracefully with a network-error message.
   - If the page loads with a `?code=XYZ` query param, `AuthScreen` starts directly in the code-gate mode and auto-validates immediately, so a shared invite link passes through with no typing required. Otherwise the user enters a code manually.
   - Once validated, the code is held in memory (not yet marked used) and the existing gym/owner registration form appears.
-  - The code is only actually consumed on final submit: `handleRegisterGym` in `App.jsx` is now async and calls `POST /api/invite-codes/redeem` (atomic compare-and-swap on the backend) before creating the local gym/owner records; if redemption fails (already used, invalid), registration is aborted with an error and no local gym is created. An abandoned code-gate attempt (validated but never submitted) does not burn the code.
+  - The code is only actually consumed on final submit: `handleRegisterGym` in `App.jsx` calls `POST /api/auth/register-gym` (added July 15, 2026 — see Authentication below), which redeems the code, creates a real `Gym` + owner `User` row in Postgres, and returns a JWT in one atomic transaction; if redemption fails (already used, invalid) or the owner email is already taken, registration is aborted with an error and nothing is created. An abandoned code-gate attempt (validated but never submitted) does not burn the code. The standalone `POST /api/invite-codes/redeem` endpoint (see Invite codes below) still exists but is no longer called directly by the frontend.
   - Backend invite codes are a standalone, non-tenant-scoped entity (`InviteCode`: Code, IsUsed, CreatedAt, UsedAt) since they must be checkable before any tenant/gym exists.
 - New gym onboarding includes:
   - Gym name and city.
@@ -91,7 +92,8 @@ Current UI features:
   - A 14-day trial with pending approval and pending email verification status.
   - Tenant registration and owner login persistence in `localStorage` under `gymflow-registered-gyms`.
   - Tenant-filtered user management so one gym cannot see another gym's users.
-- Registration, approval, email verification, and password storage remain frontend-only mock behavior until backend authentication is implemented.
+- Registered-gym login and registration use real backend authentication (see Authentication below, added July 15, 2026): hashed passwords, a real `Gym`/`User` row in Postgres, and a JWT session. Approval status, email verification, and subscription-plan selection are still frontend-only mock bookkeeping (`registeredGyms` in `localStorage`) — only the account/credential itself is real now.
+- The four "Cuentas demo" accounts (password `Demo123!`) remain a deliberate local-only shortcut: `handleLogin` in `App.jsx` checks the local mock `users` array first (any entry with a `password` field) and only falls through to the real backend for accounts without one. They never reach Postgres and there is no backend row for them.
 - Local demo authentication screen with active/inactive user validation.
 - Role-based navigation and action permissions:
   - Owner: full access, including user management.
@@ -103,8 +105,7 @@ Current UI features:
   - Activating and deactivating accounts.
   - Permission summaries per role.
   - Protection against deactivating the current user.
-- Demo accounts use password `Demo123!`.
-- Authentication is frontend-only mock behavior until the runnable backend and secure password storage are implemented.
+- Demo accounts use password `Demo123!` (local-only, see above — not a real backend account).
 - Classes tab includes:
   - A "Programar clase" panel with a member picker on the left (name search, avatar, name, email, single selection) and the class form on the right (trainer, date, time, duration, capacity, room), separated by a vertical divider.
   - The Clase field is a select fed by the class catalog registered in Configuracion; choosing one auto-fills trainer, duration, capacity, and room (all still editable), while date and time stay manual.
@@ -257,16 +258,20 @@ Main backend files:
 - `backend/src/API/Controllers/CheckInController.cs`
 - `backend/src/API/Controllers/SubscriptionController.cs`
 - `backend/src/API/Controllers/InviteCodesController.cs`
+- `backend/src/API/Controllers/AuthController.cs`
 - `backend/src/API/GymSaaS.Api.csproj`
 - `backend/src/API/Program.cs`
 - `backend/src/API/appsettings.json`
 - `backend/src/API/appsettings.Development.json`
 - `backend/src/API/Program.example.cs`
 - `backend/src/Application/Abstractions/ITenantProvider.cs`
+- `backend/src/Application/Abstractions/IJwtTokenService.cs`
+- `backend/src/Application/Abstractions/IInviteCodeService.cs`
 - `backend/src/Application/DTOs/Dashboard/*`
 - `backend/src/Application/DTOs/CheckIns/*`
 - `backend/src/Application/DTOs/Subscriptions/*`
 - `backend/src/Application/DTOs/InviteCodes/*`
+- `backend/src/Application/DTOs/Auth/*`
 - `backend/src/Application/Payments/*`
 - `backend/src/Application/Services/IMembershipStatusService.cs`
 - `backend/src/Application/Services/MembershipStatusService.cs`
@@ -276,8 +281,11 @@ Main backend files:
 - `backend/src/Infrastructure/DependencyInjection.cs`
 - `backend/src/Infrastructure/Persistence/GymSaaSDbContext.cs`
 - `backend/src/Infrastructure/Persistence/PostgresOptions.cs`
+- `backend/src/Infrastructure/Persistence/InviteCodeService.cs`
 - `backend/src/Infrastructure/Persistence/Migrations/*`
-- `backend/src/Infrastructure/Tenancy/HeaderTenantProvider.cs`
+- `backend/src/Infrastructure/Tenancy/ClaimsTenantProvider.cs`
+- `backend/src/Infrastructure/Auth/JwtTokenService.cs`
+- `backend/src/Infrastructure/Auth/JwtOptions.cs`
 
 Backend domain entities:
 
@@ -294,15 +302,32 @@ Multi-tenant structure:
 - Tenant is represented by `Gym`.
 - Tenant-scoped entities use `TenantId`.
 - `GymSaaSDbContext` includes global query filters using `ITenantProvider`.
-- `HeaderTenantProvider` reads tenant id from header `X-Tenant-Id`.
+- `ClaimsTenantProvider` (replaced `HeaderTenantProvider` on July 15, 2026) reads tenant id from the `tenant_id` claim on the authenticated JWT — no longer trusts a client-supplied header. `HeaderTenantProvider.cs` was deleted; the `Tenant:HeaderName` config entry was removed.
 - `Attendance` records allowed and blocked check-in attempts per tenant/member.
 - `Attendance` stores entry and optional exit timestamps for allowed visits.
-- `CheckInController` exposes `POST /api/check-ins`, `POST /api/check-ins/check-out`, and `GET /api/check-ins/recent`.
+- `CheckInController` exposes `POST /api/check-ins`, `POST /api/check-ins/check-out`, and `GET /api/check-ins/recent`; `RecordedByUserId`/`CheckedOutByUserId` are now populated from the authenticated principal (`ClaimTypes.NameIdentifier`), not client-supplied request fields.
 - The backend rejects a second active entry and has a filtered unique index per tenant/member.
+
+Authentication (added July 15, 2026):
+
+- Real backend authentication replaces what was previously a no-op authorization policy (`"TenantStaff"` was `RequireAssertion(_ => true)`, i.e. it authorized everything) and the client-trusted `X-Tenant-Id` header.
+- New `User` entity/table (`Users`): `Id`, `TenantId`, `Email` (globally unique, case-insensitive), `PasswordHash`, `FullName`, `Role` (`Owner`/`Admin`/`Reception`/`Trainer`), `IsActive`, `CreatedAt`. Deliberately **not** `ITenantScoped` (same reasoning as `InviteCode`): login must resolve the tenant from the email lookup before any tenant context exists.
+- Passwords hashed via `Microsoft.AspNetCore.Identity.PasswordHasher<User>` (ships in the ASP.NET Core shared framework, no extra package).
+- `AuthController` (`api/auth`, anonymous, rate-limited — see below):
+  - `POST /api/auth/login`: `{ email, password }` -> `{ token, user }`.
+  - `POST /api/auth/register-gym`: `{ gymName, city, phone, ownerName, email, password, acceptTerms, inviteCode }` -> `{ token, user }`. Wraps invite-code redemption (via `IInviteCodeService`, shared with `InviteCodesController`) and `Gym`+owner `User` creation in one DB transaction; slug is auto-generated from the gym name plus a random suffix.
+- JWTs are signed HMAC-SHA256, carry `sub`/`ClaimTypes.NameIdentifier` (user id), `tenant_id` (custom claim, read by `ClaimsTenantProvider`), `ClaimTypes.Role`, email, and name. Config lives under `Jwt:*` (`Issuer`, `Audience`, `SigningKey`, `ExpiryMinutes`) in `appsettings*.json`, same override-via-environment-variable convention as the DB connection string. Default expiry is 720 minutes (12h); no refresh tokens — the frontend keeps the token in memory only (lost on refresh, same as before) and the user re-logs in.
+- The `"TenantStaff"` authorization policy now requires an authenticated user (`RequireAuthenticatedUser()`).
+- Rate limiting (added July 15, 2026): all anonymous, credential-guessable endpoints (`AuthController`'s login/register-gym, `InviteCodesController`'s validate/redeem) carry `[EnableRateLimiting("auth")]` — a fixed-window limiter, 10 requests/minute per client IP, configured in `Program.cs` via `AddRateLimiter`/`UseRateLimiter`. Rejections return 429 with a plain-string JSON body the frontend already knows how to surface.
+- **Local dev secrets**: `appsettings.json`/`appsettings.Development.json` no longer contain a `Password=` in `ConnectionStrings:DefaultConnection` (removed July 15, 2026 — a real-shaped credential sitting in a committed file, even as a placeholder, was flagged as a risk in a security review). The project now has `UserSecretsId` set (`GymSaaS.Api.csproj`); each developer must run, once, from `backend/src/API`:
+  ```
+  dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=GymSaaS_Dev;Username=postgres;Password=postgres"
+  ```
+  (or whatever their local Postgres credentials are). This is machine-local, never committed. Production is unaffected — Coolify already fully overrides `ConnectionStrings:DefaultConnection` via its own environment variable, as before.
 
 Invite codes (added July 13, 2026):
 
-- `InviteCodesController` exposes `POST /api/invite-codes/validate` (read-only check, `{ code }` -> `{ isValid }`) and `POST /api/invite-codes/redeem` (`{ code }` -> `{ success, message }`, atomic `ExecuteUpdateAsync` compare-and-swap that sets `IsUsed`/`UsedAt` only if still unused). Both are intentionally anonymous (no `[Authorize]`) since they run before any account/tenant exists.
+- `InviteCodesController` exposes `POST /api/invite-codes/validate` (read-only check, `{ code }` -> `{ isValid }`) and `POST /api/invite-codes/redeem` (`{ code }` -> `{ success, message }`, atomic `ExecuteUpdateAsync` compare-and-swap that sets `IsUsed`/`UsedAt` only if still unused). Both are intentionally anonymous (no `[Authorize]`) since they run before any account/tenant exists, and both are rate-limited (see Authentication above). The validate/redeem logic itself now lives in `IInviteCodeService`/`InviteCodeService` (`backend/src/Infrastructure/Persistence/InviteCodeService.cs`), shared with `AuthController.RegisterGym`; the controller is now a thin wrapper.
 - Codes are matched case-insensitively (trimmed + upper-invariant) against `InviteCodes.Code`.
 - No admin endpoint exists to generate codes (deliberately, to avoid an unauthenticated way to mint unlimited codes and defeat the capacity cap); codes are seeded directly into Postgres as needed.
 - CORS is now configured (`Cors:AllowedOrigins` in appsettings, wired via `AddCors`/`UseCors` in `Program.cs`) since the frontend calls this API cross-origin for the first time. Production allows `https://gymassist.online`; add more origins there (not code changes) if needed.
@@ -325,8 +350,9 @@ Important backend note:
 
 - `GymSaaS.Api.csproj` and `Program.cs` are committed; `dotnet build` succeeds with 0 errors after the PostgreSQL switch.
 - `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable PostgreSQL server at the `DefaultConnection` string.
-- The frontend does not call the backend yet (still frontend-only mock data), so a missing database does not block using the app.
-- An initial EF Core migration (`InitialCreate`, under `backend/src/Infrastructure/Persistence/Migrations/`) covers all six entities; `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
+- As of July 15, 2026 the frontend does call the backend for real: `POST /api/auth/login` and `POST /api/auth/register-gym` for registered-gym accounts (demo accounts remain local-only, see Authentication above). A missing database blocks real login/registration but not the rest of the app (still frontend-only mock data everywhere else).
+- An initial EF Core migration (`InitialCreate`, under `backend/src/Infrastructure/Persistence/Migrations/`) covers the original six entities; `AddInviteCodes` and `AddUsersAndGymCity` (July 15, 2026 — adds the `Users` table and `Gyms.City`) followed. `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
+- The July 15, 2026 authentication/rate-limiting/secrets changes were built and verified locally (`dotnet build`, `dotnet ef migrations has-pending-model-changes` reports none, `npm run build`, and a browser check of the demo-login and registration UI flows) but **not yet deployed** — no reachable Postgres or Docker exists in this dev sandbox, so the real login/registration round-trip against Postgres still needs verifying after deploying to Coolify (or against a local Postgres instance, after running the `dotnet user-secrets set` command above).
 - Deployment: a self-hosted Coolify instance ("Back-end Server") has this repo's `backend/` wired up as a Dockerfile-based application (Base Directory `/backend`, Ports Exposes `8080`), plus a separate PostgreSQL database resource, both running as of July 13, 2026. The real connection string/credentials live only in Coolify's Environment Variables for that app, never in this repo (the GitHub repo is public).
 - Verified live end-to-end on July 13, 2026: the migration applied automatically on deploy (all tables + indexes created, including the Postgres-syntax filtered unique index on `Attendances`), and `/api/check-ins/recent` returns `200 []` with a tenant header.
 - Domain: `https://gymassist.online` was reassigned to the frontend app (see Frontend > Deployment), so the backend now runs on Coolify's auto-generated domain, currently `http://rtd0nqdvy8gwlo6zwwrtigtr.67.207.90.99.sslip.io`. No DNS wildcard exists for `*.gymassist.online` (confirmed via `nslookup`), so a subdomain like `api.gymassist.online` would need an A record added at the registrar before it could be used here.
@@ -335,15 +361,18 @@ Important backend note:
 
 This history (`bc260ce` … `2e88a8b`) is from the prior `D:\GYM` / `GymRepos.git` / `develop` workspace and predates this repo's history; it's kept here only as background on prior feature work, not as this repo's log.
 
-This repo (`GymProyectChanges.git`) history:
+This repo (`GymProyectChanges.git`) history, oldest to newest:
 
 - `1ab8650 Create Test` (initial placeholder commit made via the GitHub UI)
 - `8f6a11a Add Gym SaaS dashboard project (frontend + backend)` (imported the full project from the `D:\GYM` workspace onto `main`)
+- `17e65d6 Switch backend from SQL Server to PostgreSQL`
+- `cb95d15 Add initial EF Core migration and frontend Docker deployment`
+- `439d5f6 Add invite-code gate for gym registration`
 
 Current branch for ongoing feature work:
 
-- `main`
-- As of July 13, 2026: `main` is pushed and in sync with `origin/main` up to `8f6a11a`. Local changes pending commit since then: the SQL Server -> PostgreSQL backend switch (see "Important backend note" above) — `CONTEXT.md`, `backend/src/API/GymSaaS.Api.csproj`, `backend/src/API/appsettings.json`, `backend/src/API/appsettings.Development.json`, `backend/src/Infrastructure/DependencyInjection.cs`, `backend/src/Infrastructure/Persistence/GymSaaSDbContext.cs`, `backend/src/Infrastructure/Persistence/PostgresOptions.cs` (new, replaces deleted `SqlServerOptions.cs`).
+- `main`, pushed and in sync with `origin/main` up to `439d5f6` as of this note.
+- As of July 15, 2026: local changes pending commit (deliberately left uncommitted/unpushed per instruction) — the real backend authentication system, `ClaimsTenantProvider` tenant-derivation fix, rate limiting, and connection-string secrets hygiene described in the Authentication section above. Touches most backend files plus `frontend/src/App.jsx`, `frontend/src/components/AuthScreen.jsx`, `frontend/src/authApi.js` (new), `frontend/src/inviteCodeApi.js`. Run `git status --short` to see the exact set before deciding whether to commit.
 
 Most recent frontend changes:
 
@@ -414,6 +443,7 @@ Most recent frontend changes:
 - Added to Configuracion, below "Planes registrados": a "Registrar clase"/"Editar clase" form (name, trainer, duration, capacity, room) and a "Registro de clases" table with pencil/trash actions and a delete confirmation modal, mirroring the plans UX.
 - "Programar clase" now takes its Clase field from the catalog as a select; selecting a class auto-fills trainer, duration, capacity, and room (editable), with an empty-catalog hint pointing to Configuracion.
 - Verified in the browser preview: seeded catalog table, Pilates registration, Funcional edit (capacity 10 to 14), Spinning deletion via modal, catalog options and auto-fill in Programar clase, and a full class-plus-reservation creation from a template. `npm run build` passes.
+- Added real backend authentication (July 15, 2026, see Authentication above): `handleLogin`/`handleRegisterGym` in `App.jsx` now call the real backend for registered-gym accounts via new `frontend/src/authApi.js`; demo accounts stay local-only by design. Plaintext passwords are no longer written to `localStorage`. `AuthScreen.jsx`'s login submit is now async (was a bug risk once `onLogin` became async — fixed with a loading state on the submit button). `redeemInviteCode` was removed from `inviteCodeApi.js` (dead code — redemption now happens server-side inside `register-gym`); `validateInviteCode` is unchanged. Verified in the browser preview: demo login/logout, and graceful failure of the invite-code check when the backend is unreachable. `npm run build` passes.
 
 In the next chat, first run:
 

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using GymSaaS.Application.Abstractions;
 using GymSaaS.Application.DTOs.CheckIns;
 using GymSaaS.Domain.Entities;
@@ -22,6 +23,8 @@ public sealed class CheckInController : ControllerBase
         _dbContext = dbContext;
         _tenantProvider = tenantProvider;
     }
+
+    private string? CurrentUserId => User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
     [HttpPost]
     public async Task<ActionResult<CheckInResponse>> CheckIn(
@@ -80,7 +83,7 @@ public sealed class CheckInController : ControllerBase
             CheckedInAt = checkedInAt,
             AccessGranted = accessGranted,
             Reason = reason,
-            RecordedByUserId = request.RecordedByUserId?.Trim()
+            RecordedByUserId = CurrentUserId
         };
 
         _dbContext.Attendances.Add(attendance);
@@ -122,7 +125,7 @@ public sealed class CheckInController : ControllerBase
         }
 
         attendance.CheckedOutAt = DateTimeOffset.UtcNow;
-        attendance.CheckedOutByUserId = request.RecordedByUserId?.Trim();
+        attendance.CheckedOutByUserId = CurrentUserId;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(new CheckOutResponse(

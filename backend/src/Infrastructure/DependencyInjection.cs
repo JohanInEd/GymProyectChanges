@@ -1,7 +1,10 @@
 using GymSaaS.Application.Abstractions;
 using GymSaaS.Application.Services;
+using GymSaaS.Domain.Entities;
+using GymSaaS.Infrastructure.Auth;
 using GymSaaS.Infrastructure.Persistence;
 using GymSaaS.Infrastructure.Tenancy;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,8 +27,12 @@ public static class DependencyInjection
         var postgresOptions = configuration.GetSection("Postgres").Get<PostgresOptions>() ?? new PostgresOptions();
 
         services.AddHttpContextAccessor();
-        services.AddScoped<ITenantProvider, HeaderTenantProvider>();
+        services.AddScoped<ITenantProvider, ClaimsTenantProvider>();
         services.AddScoped<IMembershipStatusService, MembershipStatusService>();
+        services.AddScoped<IInviteCodeService, InviteCodeService>();
+        services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+        services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
 
         services.AddDbContext<GymSaaSDbContext>(options =>
         {
