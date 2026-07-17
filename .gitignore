@@ -13,4 +13,8 @@ obj/
 .env
 .env.*
 
+# Database dumps: contain real gym data, never commit them.
+backups/
+*.dump
+
 .vite/

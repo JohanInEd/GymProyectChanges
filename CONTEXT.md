@@ -443,6 +443,29 @@ cd frontend && npm run dev
 
 `launchSettings.json` sets `ASPNETCORE_ENVIRONMENT=Development`, which is what makes user-secrets load. Without it `dotnet run` starts in Production and fails with "Connection string 'DefaultConnection' is required."
 
+## Backups
+
+`scripts/backup-db.sh` (added July 16, 2026) dumps the database with `pg_dump --format=custom` (compressed, restorable with `pg_restore`), timestamps the file, and prunes to the newest `RETENTION` dumps (default 14).
+
+```bash
+# local (this machine)
+PG_BIN="D:/pgsql/bin" \
+DATABASE_URL="postgresql://postgres:<local password>@localhost:5432/GymSaaS_Dev" \
+  ./scripts/backup-db.sh
+
+# restore over an existing database
+pg_restore --clean --if-exists --no-owner --no-privileges -d "$DATABASE_URL" backups/<file>.dump
+```
+
+`backups/` and `*.dump` are gitignored: dumps contain real gym data and this repo is public. Note `DATABASE_URL` carries the password, so pass it from the environment — never hard-code it. If the password contains `!` or other URL-reserved characters, percent-encode it (`!` -> `%21`).
+
+**Verified July 16, 2026**: a local dump was restored into a scratch database and matched the original exactly (23 tables; same row counts for Gyms/Members/Payments/SaasSubscriptions). A backup that has never been restored is not a backup.
+
+**Still to do for production** (needs Coolify access, not yet done):
+- Prefer **Coolify's built-in scheduled backups** on the PostgreSQL resource (it supports a schedule + S3 off-site storage) over a hand-rolled cron. Set a schedule, an off-site destination, and a retention.
+- Whatever the mechanism, **test a restore at least once** — otherwise you only think you have backups.
+- Take a manual backup immediately **before** the first deploy of the July 16 migrations, since that deploy applies four migrations to the live database.
+
 ## Why PostgreSQL and not SQL Server (decided July 16, 2026)
 
 The machine also has a SQL Server Express database `GymApp` (`JOHAN\SQLEXPRESS`) with an earlier, hand-made schema: `ETGimnasio`, `ETUsuarioGym`, `ETRoles`, `ETProductos`, `ETVentas`, `ETDetalleVentas`, `PMPagos`, `PMPlanesMembresia`, `Gestion_Modelo_Saas`, `Saas_Invoices`. **The decision is to stay on PostgreSQL.** Reasons, for the record:
@@ -461,7 +484,7 @@ The machine also has a SQL Server Express database `GymApp` (`JOHAN\SQLEXPRESS`)
 - **Product sales (POS) are not implemented.** The Inventario tab says "Registra productos vendidos en la recepcion" and shows inventory value, but nothing records a sale. Needs `Sale`/`SaleItem` entities, stock decrement on sale, and the sale feeding Finanzas income. The user's SQL Server design (`ETVentas`/`ETDetalleVentas`) modelled this; it was deliberately deferred.
 - **No real email provider.** `ConsoleEmailSender` only logs; password-reset and verification emails are not delivered.
 - **Frontend does not consume the `?reset=` / `?verify=` links** the backend emails.
-- **No DB backups and no monitoring/alerting** configured on Coolify (needs the user's Coolify access).
+- **Production backups are NOT configured yet** on Coolify, and there is no monitoring/alerting. A backup *tool* exists and is verified (see Backups below), but nothing is scheduled against the production database. Do this before any real gym puts data in.
 - `FinanceController.GetSummary` returns **all** paid payments and expenses (not truncated) because the frontend derives analytics and per-category totals from those lists; a `Take(n)` would silently skew them. This will need pagination or server-side aggregation as data grows.
 - No admin/super-user surface: invite codes and SaaS invoices are inserted straight into Postgres by the operator.
 
