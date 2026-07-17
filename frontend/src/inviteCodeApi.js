@@ -1,20 +1,10 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
-
-async function postJson(path, body) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
-  }
-
-  return response.json();
-}
+import { api } from "./apiClient.js";
 
 export async function validateInviteCode(code) {
-  const result = await postJson("/api/invite-codes/validate", { code });
-  return result.isValid;
+  const result = await api.post("/api/invite-codes/validate", { code });
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+
+  return result.data.isValid;
 }

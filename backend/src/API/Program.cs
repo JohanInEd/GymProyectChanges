@@ -1,5 +1,6 @@
 using System.Text;
 using System.Threading.RateLimiting;
+using GymSaaS.API.Middleware;
 using GymSaaS.Infrastructure;
 using GymSaaS.Infrastructure.Auth;
 using GymSaaS.Infrastructure.Persistence;
@@ -15,6 +16,14 @@ var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
     ?? throw new InvalidOperationException("Configuration section 'Jwt' is required.");
 
 builder.Services.AddControllers();
+builder.Services.AddHttpLogging(options =>
+{
+    options.LoggingFields =
+        Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.RequestMethod |
+        Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.RequestPath |
+        Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.ResponseStatusCode |
+        Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.Duration;
+});
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -69,6 +78,8 @@ using (var scope = app.Services.CreateScope())
     dbContext.Database.Migrate();
 }
 
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseHttpLogging();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();

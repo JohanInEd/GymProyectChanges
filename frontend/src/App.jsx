@@ -1,6 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
+import { setAuthToken as setApiAuthToken, setUnauthorizedHandler } from "./apiClient.js";
 import { getRoleLabel, hasPermission } from "./auth.js";
-import { login as authLogin, registerGym as authRegisterGym } from "./authApi.js";
+import { login as authLogin, me as authMe, registerGym as authRegisterGym } from "./authApi.js";
+import {
+  toAttendanceLog,
+  toBudget,
+  toClassTemplate,
+  toEquipment,
+  toFinancialSummary,
+  toGymClass,
+  toGymProfile,
+  toMember,
+  toPlan,
+  toProduct,
+  toReservations,
+  toShift,
+  toStaffUser,
+} from "./adapters.js";
+import {
+  checkInApi,
+  classesApi,
+  financeApi,
+  gymProfileApi,
+  inventoryApi,
+  membersApi,
+  operationsApi,
+  plansApi,
+  progressApi,
+  staffApi,
+} from "./gymApi.js";
+import { clearSession, loadSession, saveSession } from "./session.js";
 import AccessManagement from "./components/AccessManagement.jsx";
 import AnalyticsDashboard from "./components/AnalyticsDashboard.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
@@ -519,6 +548,8 @@ export default function App() {
   ]);
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(loadSession()));
+  const [apiError, setApiError] = useState(null);
   const [workspaceId, setWorkspaceId] = useState("gym-demo");
   const [onboarding, setOnboarding] = useState({
     status: "active",
@@ -668,12 +699,185 @@ export default function App() {
     localStorage.setItem("gym-theme", theme);
   }, [isDarkMode, theme]);
 
+  // Restore a saved backend session so a refresh no longer logs the user out. The stored token is
+  // re-validated against the API before it is trusted. Demo accounts are local-only shortcuts with
+  // no token and are deliberately not persisted.
+  useEffect(() => {
+    const stored = loadSession();
+    if (!stored) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setApiAuthToken(stored.token);
+
+    (async () => {
+      const result = await authMe();
+      if (cancelled) {
+        return;
+      }
+
+      if (result.ok) {
+        const user = toLocalUser(result.user);
+        setAuthToken(stored.token);
+        setUsers((current) => upsertUser(current, user));
+        signInLocalUser(user);
+      } else {
+        clearSession();
+        setApiAuthToken(null);
+      }
+
+      setIsRestoringSession(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Any 401 from the API means the token is gone or expired: drop the session cleanly.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      clearSession();
+      setApiAuthToken(null);
+      setAuthToken(null);
+      setCurrentUser(null);
+    });
+  }, []);
+
   useEffect(() => {
     const reachableTabs = [...navigationItems, ...settingsNavigationItems];
     if (currentUser && !reachableTabs.some((item) => item.id === activeTab)) {
       setActiveTab(navigationItems[0]?.id || "clients");
     }
   }, [activeTab, currentUser, navigationItems, settingsNavigationItems]);
+
+  // ---- Backend-backed workspace loading ----
+  // Demo accounts stay on the local mock data; every real (token-backed) gym reads and writes
+  // through the API, so its data survives refreshes and is shared across staff and devices.
+
+  const isBackendSession = Boolean(authToken);
+
+  // Surfaces API failures for the actions whose callers do not consume a return value,
+  // so a rejected write never fails silently.
+  function reportApiError(result) {
+    if (!result.ok) {
+      setApiError(result.message);
+      return false;
+    }
+
+    setApiError(null);
+    return true;
+  }
+
+  async function refreshMembers() {
+    const result = await membersApi.list();
+    if (result.ok) {
+      const mapped = result.data.map(toMember);
+      setMembers(mapped);
+      setSelectedMemberId((current) => current || mapped[0]?.memberId);
+    }
+  }
+
+  async function refreshFinance() {
+    const result = await financeApi.summary();
+    if (result.ok) {
+      setFinancialSummary(toFinancialSummary(result.data));
+    }
+  }
+
+  async function refreshPlans() {
+    const result = await plansApi.list();
+    if (result.ok) {
+      setPlans(result.data.map(toPlan));
+    }
+  }
+
+  async function refreshClasses() {
+    const result = await classesApi.list();
+    if (result.ok) {
+      setClasses(result.data.map(toGymClass));
+      setReservations(toReservations(result.data));
+    }
+  }
+
+  async function refreshClassCatalog() {
+    const result = await classesApi.listTemplates();
+    if (result.ok) {
+      setClassCatalog(result.data.map(toClassTemplate));
+    }
+  }
+
+  async function refreshProducts() {
+    const result = await inventoryApi.list();
+    if (result.ok) {
+      setProducts(result.data.map(toProduct));
+    }
+  }
+
+  async function refreshProgress() {
+    const result = await progressApi.all();
+    if (result.ok) {
+      setProgressRecords(result.data.records || []);
+      setProgressGoals(result.data.goals || []);
+      setProgressNotes(result.data.notes || []);
+    }
+  }
+
+  async function refreshOperations() {
+    const result = await operationsApi.all();
+    if (result.ok) {
+      setBudgets((result.data.budgets || []).map(toBudget));
+      setEquipment((result.data.equipment || []).map(toEquipment));
+      setShifts((result.data.shifts || []).map(toShift));
+    }
+  }
+
+  async function refreshAttendance() {
+    const result = await checkInApi.recent(50);
+    if (result.ok) {
+      setAttendanceLogs(result.data.map(toAttendanceLog));
+    }
+  }
+
+  async function refreshStaff(gymId) {
+    const result = await staffApi.list();
+    if (result.ok && gymId) {
+      const apiUsers = result.data.map((item) => toStaffUser(item, gymId));
+      setUsers((current) => [...current.filter((item) => item.gymId !== gymId), ...apiUsers]);
+    }
+  }
+
+  async function refreshGymProfile() {
+    const result = await gymProfileApi.get();
+    if (result.ok) {
+      setGymProfile(toGymProfile(result.data));
+      setOnboarding({
+        status: result.data.approvalStatus === "Approved" ? "active" : "pending_approval",
+        subscriptionPlan: result.data.subscriptionPlan || "",
+        emailVerified: result.data.emailVerified,
+        registeredAt: null,
+        trialEndsAt: result.data.trialEndsAt || null,
+      });
+    }
+  }
+
+  async function refreshFromApi(user) {
+    await Promise.all([
+      refreshMembers(),
+      refreshPlans(),
+      refreshFinance(),
+      refreshProducts(),
+      refreshClasses(),
+      refreshClassCatalog(),
+      refreshProgress(),
+      refreshOperations(),
+      refreshAttendance(),
+      refreshStaff(user?.gymId),
+      refreshGymProfile(),
+    ]);
+  }
 
   function loadWorkspace(user, registeredGymOverride = null) {
     if (user.gymId === "gym-demo") {
@@ -724,6 +928,10 @@ export default function App() {
       setProgressRecords([]);
       setProgressGoals([]);
       setProgressNotes([]);
+
+      // Fill in from the API. A freshly registered gym has no rows yet, so it simply stays
+      // empty: that is the clean-workspace behaviour, now backed by real data.
+      void refreshFromApi(user);
     }
 
     setWorkspaceId(user.gymId);
@@ -757,6 +965,8 @@ export default function App() {
         return { ok: false, message: "Este usuario esta inactivo. Contacta al propietario." };
       }
 
+      setApiAuthToken(null);
+      clearSession();
       setAuthToken(null);
       signInLocalUser(localUser);
       return { ok: true };
@@ -774,6 +984,8 @@ export default function App() {
     }
 
     const user = toLocalUser(result.user);
+    setApiAuthToken(result.token);
+    saveSession(result.token, result.user);
     setAuthToken(result.token);
     setUsers((current) => upsertUser(current, user));
     signInLocalUser(user);
@@ -821,6 +1033,8 @@ export default function App() {
     setRegisteredGyms(updatedGyms);
     saveRegisteredGyms(updatedGyms);
     setUsers((current) => upsertUser(current, owner));
+    setApiAuthToken(result.token);
+    saveSession(result.token, result.user);
     setAuthToken(result.token);
     loadWorkspace(owner, registeredGym);
     setCurrentUser(owner);
@@ -830,17 +1044,34 @@ export default function App() {
   }
 
   function handleLogout() {
+    clearSession();
+    setApiAuthToken(null);
     setAuthToken(null);
     setCurrentUser(null);
   }
 
-  function handleCreateUser(user) {
+  async function handleCreateUser(user) {
     if (!hasPermission(currentUser, "users")) {
       return { ok: false, message: "No tienes permiso para crear usuarios." };
     }
 
     if (users.some((item) => item.email === user.email)) {
       return { ok: false, message: "Ya existe un usuario con este correo." };
+    }
+
+    if (isBackendSession) {
+      const result = await staffApi.create({
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        password: user.password,
+      });
+      if (!result.ok) {
+        return { ok: false, message: result.message };
+      }
+
+      await refreshStaff(currentUser.gymId);
+      return { ok: true, message: "Usuario creado correctamente." };
     }
 
     setUsers((current) => [
@@ -850,8 +1081,16 @@ export default function App() {
     return { ok: true, message: "Usuario creado correctamente." };
   }
 
-  function handleToggleUser(userId) {
+  async function handleToggleUser(userId) {
     if (!hasPermission(currentUser, "users") || userId === currentUser.id) {
+      return;
+    }
+
+    if (isBackendSession) {
+      const result = await staffApi.toggle(userId);
+      if (result.ok) {
+        await refreshStaff(currentUser.gymId);
+      }
       return;
     }
 
@@ -860,7 +1099,7 @@ export default function App() {
     );
   }
 
-  function handleCreateClassWithReservation(gymClass, memberId) {
+  async function handleCreateClassWithReservation(gymClass, memberId) {
     if (!["owner", "admin", "trainer"].includes(currentUser.role)) {
       return { ok: false, message: "No tienes permiso para programar clases." };
     }
@@ -879,6 +1118,30 @@ export default function App() {
       return { ok: false, message: "La mensualidad del cliente esta vencida." };
     }
 
+    if (isBackendSession) {
+      // The API validates the member again and creates no class if the member is invalid.
+      const result = await classesApi.create({
+        name: gymClass.name,
+        coach: gymClass.coach,
+        date: gymClass.date,
+        time: gymClass.time,
+        duration: gymClass.duration,
+        capacity: gymClass.capacity,
+        room: gymClass.room,
+        memberId,
+      });
+      if (!result.ok) {
+        return { ok: false, message: result.message };
+      }
+
+      await refreshClasses();
+      return {
+        ok: true,
+        message: `Clase creada y reserva confirmada para ${member.fullName}.`,
+        id: result.data.id,
+      };
+    }
+
     setClasses((current) => [gymClass, ...current]);
     setReservations((current) => [
       {
@@ -894,7 +1157,7 @@ export default function App() {
     return { ok: true, message: `Clase creada y reserva confirmada para ${member.fullName}.` };
   }
 
-  function handleReserveClass(classId, memberId) {
+  async function handleReserveClass(classId, memberId) {
     if (!hasPermission(currentUser, "classes")) {
       return { ok: false, message: "No tienes permiso para reservar clases." };
     }
@@ -926,6 +1189,16 @@ export default function App() {
       return { ok: false, message: "La clase ya no tiene cupos disponibles." };
     }
 
+    if (isBackendSession) {
+      const result = await classesApi.reserve({ classId, memberId });
+      if (!result.ok) {
+        return { ok: false, message: result.message };
+      }
+
+      await refreshClasses();
+      return { ok: true, message: `Reserva confirmada para ${member.fullName}.` };
+    }
+
     setReservations((current) => [
       {
         id: crypto.randomUUID(),
@@ -939,8 +1212,16 @@ export default function App() {
     return { ok: true, message: `Reserva confirmada para ${member.fullName}.` };
   }
 
-  function handleCancelReservation(reservationId) {
+  async function handleCancelReservation(reservationId) {
     if (!hasPermission(currentUser, "classes")) {
+      return;
+    }
+
+    if (isBackendSession) {
+      const result = await classesApi.cancelReservation(reservationId);
+      if (result.ok) {
+        await refreshClasses();
+      }
       return;
     }
 
@@ -949,33 +1230,80 @@ export default function App() {
     );
   }
 
-  function handleUpdateBudget(category, limit) {
+  async function handleUpdateBudget(category, limit) {
     if (!hasPermission(currentUser, "operations")) return;
+
+    if (isBackendSession) {
+      const result = await operationsApi.saveBudget({ category, monthlyLimit: limit });
+      if (result.ok) {
+        await refreshOperations();
+      }
+      return;
+    }
+
     setBudgets((current) =>
       current.map((budget) => (budget.category === category ? { ...budget, limit } : budget)),
     );
   }
 
-  function handleCreateEquipment(item) {
-    if (hasPermission(currentUser, "operations")) {
-      setEquipment((current) => [item, ...current]);
+  async function handleCreateEquipment(item) {
+    if (!hasPermission(currentUser, "operations")) return;
+
+    if (isBackendSession) {
+      const result = await operationsApi.saveEquipment({
+        id: item.id || null,
+        name: item.name,
+        category: item.category,
+        status: item.status,
+        nextMaintenance: item.nextMaintenance || null,
+      });
+      if (result.ok) {
+        await refreshOperations();
+      }
+      return;
     }
+
+    setEquipment((current) => [item, ...current]);
   }
 
-  function handleUpdateEquipmentStatus(equipmentId, status) {
+  async function handleUpdateEquipmentStatus(equipmentId, status) {
     if (!hasPermission(currentUser, "operations")) return;
+
+    if (isBackendSession) {
+      const result = await operationsApi.updateEquipmentStatus(equipmentId, status);
+      if (result.ok) {
+        await refreshOperations();
+      }
+      return;
+    }
+
     setEquipment((current) =>
       current.map((item) => (item.id === equipmentId ? { ...item, status } : item)),
     );
   }
 
-  function handleCreateShift(shift) {
-    if (hasPermission(currentUser, "operations")) {
-      setShifts((current) => [shift, ...current]);
+  async function handleCreateShift(shift) {
+    if (!hasPermission(currentUser, "operations")) return;
+
+    if (isBackendSession) {
+      const result = await operationsApi.createShift({
+        employee: shift.employee,
+        role: shift.role,
+        date: shift.date,
+        startTime: shift.start,
+        endTime: shift.end,
+        commission: shift.commission,
+      });
+      if (result.ok) {
+        await refreshOperations();
+      }
+      return;
     }
+
+    setShifts((current) => [shift, ...current]);
   }
 
-  function handleSaveProduct(product) {
+  async function handleSaveProduct(product) {
     if (!["owner", "admin"].includes(currentUser.role)) {
       return { ok: false, message: "No tienes permiso para administrar productos." };
     }
@@ -991,6 +1319,27 @@ export default function App() {
       return { ok: false, message: "Ya existe un producto con este codigo SKU." };
     }
 
+    if (isBackendSession) {
+      const result = await inventoryApi.save({
+        id: product.id || null,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        price: product.price,
+        stock: product.stock,
+        minimumStock: product.minimumStock,
+      });
+      if (!result.ok) {
+        return { ok: false, message: result.message };
+      }
+
+      await refreshProducts();
+      return {
+        ok: true,
+        message: product.id ? "Producto actualizado correctamente." : "Producto agregado al inventario.",
+      };
+    }
+
     if (product.id) {
       setProducts((current) => current.map((item) => (item.id === product.id ? product : item)));
       return { ok: true, message: "Producto actualizado correctamente." };
@@ -1000,27 +1349,61 @@ export default function App() {
     return { ok: true, message: "Producto agregado al inventario." };
   }
 
-  function handleDeleteProduct(productId) {
+  async function handleDeleteProduct(productId) {
     if (!["owner", "admin"].includes(currentUser.role)) {
+      return;
+    }
+
+    if (isBackendSession) {
+      const result = await inventoryApi.remove(productId);
+      if (result.ok) {
+        await refreshProducts();
+      }
       return;
     }
 
     setProducts((current) => current.filter((product) => product.id !== productId));
   }
 
-  function handleUpdateProductStock(productId, stock) {
+  async function handleUpdateProductStock(productId, stock) {
     if (!hasPermission(currentUser, "inventory")) {
       return;
     }
 
     const nextStock = Math.max(0, Math.floor(Number(stock) || 0));
+
+    if (isBackendSession) {
+      const result = await inventoryApi.updateStock(productId, nextStock);
+      if (result.ok) {
+        await refreshProducts();
+      }
+      return;
+    }
+
     setProducts((current) =>
       current.map((product) => (product.id === productId ? { ...product, stock: nextStock } : product)),
     );
   }
 
-  function handleAddProgressMeasurement(record) {
+  async function handleAddProgressMeasurement(record) {
     if (!hasPermission(currentUser, "progress")) return;
+
+    if (isBackendSession) {
+      const result = await progressApi.addRecord({
+        memberId: record.memberId,
+        date: record.date,
+        weightKg: record.weightKg ?? null,
+        chestCm: record.chestCm ?? null,
+        waistCm: record.waistCm ?? null,
+        hipCm: record.hipCm ?? null,
+        bodyFatPercentage: record.bodyFatPercentage ?? null,
+      });
+      if (!reportApiError(result)) return;
+
+      // The API also updates the member's current body metrics, so refresh both.
+      await Promise.all([refreshProgress(), refreshMembers()]);
+      return;
+    }
 
     setProgressRecords((current) => [...current, record]);
     setMembers((current) =>
@@ -1041,26 +1424,83 @@ export default function App() {
     );
   }
 
-  function handleAddProgressGoal(goal) {
-    if (hasPermission(currentUser, "progress")) {
-      setProgressGoals((current) => [goal, ...current]);
+  async function handleAddProgressGoal(goal) {
+    if (!hasPermission(currentUser, "progress")) return;
+
+    if (isBackendSession) {
+      const result = await progressApi.addGoal({
+        memberId: goal.memberId,
+        title: goal.title,
+        targetValue: goal.targetValue ?? null,
+        unit: goal.unit || null,
+        targetDate: goal.targetDate || null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshProgress();
+      return;
     }
+
+    setProgressGoals((current) => [goal, ...current]);
   }
 
-  function handleToggleProgressGoal(goalId) {
+  async function handleToggleProgressGoal(goalId) {
     if (!hasPermission(currentUser, "progress")) return;
+
+    if (isBackendSession) {
+      const result = await progressApi.toggleGoal(goalId);
+      if (!reportApiError(result)) return;
+
+      await refreshProgress();
+      return;
+    }
+
     setProgressGoals((current) =>
       current.map((goal) => (goal.id === goalId ? { ...goal, completed: !goal.completed } : goal)),
     );
   }
 
-  function handleAddProgressNote(note) {
-    if (hasPermission(currentUser, "progress")) {
-      setProgressNotes((current) => [note, ...current]);
+  async function handleAddProgressNote(note) {
+    if (!hasPermission(currentUser, "progress")) return;
+
+    if (isBackendSession) {
+      const result = await progressApi.addNote({ memberId: note.memberId, text: note.text });
+      if (!reportApiError(result)) return;
+
+      await refreshProgress();
+      return;
     }
+
+    setProgressNotes((current) => [note, ...current]);
   }
 
-  function handleCreateMember(member) {
+  async function handleCreateMember(member) {
+    if (isBackendSession) {
+      const result = await membersApi.create({
+        fullName: member.fullName,
+        email: member.email || null,
+        phone: member.phone || null,
+        gender: member.gender || null,
+        age: member.age ?? null,
+        planName: member.planName || null,
+        subscriptionValue: member.subscriptionValue ?? null,
+        startDate: member.startDate || null,
+        heightCm: member.bodyMetrics?.heightCm ?? null,
+        weightKg: member.bodyMetrics?.weightKg ?? null,
+        chestCm: member.bodyMetrics?.chestCm ?? null,
+        armCm: member.bodyMetrics?.armCm ?? null,
+        waistCm: member.bodyMetrics?.waistCm ?? null,
+        hipCm: member.bodyMetrics?.hipCm ?? null,
+        legCm: member.bodyMetrics?.legCm ?? null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshMembers();
+      setSelectedMemberId(result.data.memberId);
+      setActiveTab("membership");
+      return;
+    }
+
     setMembers((current) => [member, ...current]);
     setSelectedMemberId(member.memberId);
     setActiveTab("membership");
@@ -1075,7 +1515,29 @@ export default function App() {
     setEditingMemberId(null);
   }
 
-  function handleUpdateMember(updatedFields) {
+  async function handleUpdateMember(updatedFields) {
+    if (isBackendSession) {
+      const result = await membersApi.update(updatedFields.memberId, {
+        fullName: updatedFields.fullName,
+        email: updatedFields.email || null,
+        phone: updatedFields.phone || null,
+        gender: updatedFields.gender || null,
+        age: updatedFields.age ?? null,
+        heightCm: updatedFields.bodyMetrics?.heightCm ?? null,
+        weightKg: updatedFields.bodyMetrics?.weightKg ?? null,
+        chestCm: updatedFields.bodyMetrics?.chestCm ?? null,
+        armCm: updatedFields.bodyMetrics?.armCm ?? null,
+        waistCm: updatedFields.bodyMetrics?.waistCm ?? null,
+        hipCm: updatedFields.bodyMetrics?.hipCm ?? null,
+        legCm: updatedFields.bodyMetrics?.legCm ?? null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshMembers();
+      setEditingMemberId(null);
+      return;
+    }
+
     setMembers((current) =>
       current.map((member) =>
         member.memberId === updatedFields.memberId ? { ...member, ...updatedFields } : member,
@@ -1084,8 +1546,16 @@ export default function App() {
     setEditingMemberId(null);
   }
 
-  function handleDeleteMember(memberId) {
-    setMembers((current) => current.filter((member) => member.memberId !== memberId));
+  async function handleDeleteMember(memberId) {
+    if (isBackendSession) {
+      const result = await membersApi.remove(memberId);
+      if (!reportApiError(result)) return;
+
+      await refreshMembers();
+    } else {
+      setMembers((current) => current.filter((member) => member.memberId !== memberId));
+    }
+
     if (selectedMemberId === memberId) {
       setSelectedMemberId(undefined);
     }
@@ -1094,7 +1564,22 @@ export default function App() {
     }
   }
 
-  function handleCreatePlan(plan) {
+  async function handleCreatePlan(plan) {
+    if (isBackendSession) {
+      const result = await plansApi.save({
+        id: plan.id || null,
+        name: plan.name,
+        description: plan.description || null,
+        price: plan.price,
+        durationDays: plan.durationDays,
+        maxClasses: plan.maxClasses ?? null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshPlans();
+      return;
+    }
+
     setPlans((current) => {
       const existingById = current.find((item) => item.id === plan.id);
 
@@ -1112,11 +1597,34 @@ export default function App() {
     });
   }
 
-  function handleDeletePlan(planId) {
+  async function handleDeletePlan(planId) {
+    if (isBackendSession) {
+      const result = await plansApi.remove(planId);
+      if (!reportApiError(result)) return;
+
+      await refreshPlans();
+      return;
+    }
+
     setPlans((current) => current.filter((plan) => plan.id !== planId));
   }
 
-  function handleSaveClassTemplate(template) {
+  async function handleSaveClassTemplate(template) {
+    if (isBackendSession) {
+      const result = await classesApi.saveTemplate({
+        id: template.id || null,
+        name: template.name,
+        coach: template.coach || null,
+        duration: template.duration,
+        capacity: template.capacity,
+        room: template.room || null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshClassCatalog();
+      return;
+    }
+
     setClassCatalog((current) => {
       const existingById = current.find((item) => item.id === template.id);
 
@@ -1134,11 +1642,32 @@ export default function App() {
     });
   }
 
-  function handleDeleteClassTemplate(templateId) {
+  async function handleDeleteClassTemplate(templateId) {
+    if (isBackendSession) {
+      const result = await classesApi.removeTemplate(templateId);
+      if (!reportApiError(result)) return;
+
+      await refreshClassCatalog();
+      return;
+    }
+
     setClassCatalog((current) => current.filter((template) => template.id !== templateId));
   }
 
-  function handleSaveGymProfile(profile) {
+  async function handleSaveGymProfile(profile) {
+    if (isBackendSession) {
+      const result = await gymProfileApi.update({
+        gymName: profile.gymName,
+        city: profile.city || null,
+        phone: profile.adminPhone || null,
+        adminName: profile.adminName || null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshGymProfile();
+      return;
+    }
+
     setGymProfile(profile);
 
     if (currentUser.gymId === "gym-demo") {
@@ -1186,7 +1715,19 @@ export default function App() {
     };
   }
 
-  function handleUpdateMembership(memberId, dates) {
+  async function handleUpdateMembership(memberId, dates) {
+    if (isBackendSession) {
+      const result = await membersApi.updateMembership(memberId, {
+        startDate: dates.startDate,
+        endDate: dates.endDate,
+        planName: dates.planName || null,
+      });
+      if (!reportApiError(result)) return;
+
+      await refreshMembers();
+      return;
+    }
+
     setMembers((current) =>
       current.map((member) =>
         member.memberId === memberId
@@ -1200,7 +1741,7 @@ export default function App() {
     );
   }
 
-  function handleCheckIn(memberId) {
+  async function handleCheckIn(memberId) {
     const member = members.find((item) => item.memberId === memberId);
 
     if (!member) {
@@ -1216,6 +1757,28 @@ export default function App() {
         ...openAttendance,
         action: "duplicate",
         reason: "Este cliente ya tiene una entrada activa. Valida la salida antes de registrar otro ingreso.",
+      };
+    }
+
+    if (isBackendSession) {
+      // The API decides access (active / expired / suspended) and records the attempt.
+      const result = await checkInApi.checkIn(memberId);
+      if (!result.ok) {
+        setApiError(result.message);
+        return null;
+      }
+
+      await refreshAttendance();
+      return {
+        id: result.data.attendanceId,
+        memberId,
+        fullName: result.data.memberName,
+        planName: member.planName,
+        accessGranted: result.data.accessGranted,
+        checkedAt: result.data.checkedInAt,
+        checkedOutAt: null,
+        action: "check-in",
+        reason: result.data.reason,
       };
     }
 
@@ -1243,7 +1806,7 @@ export default function App() {
     return log;
   }
 
-  function handleCheckOut(memberId) {
+  async function handleCheckOut(memberId) {
     const checkedOutAt = new Date().toISOString();
     const openAttendance = attendanceLogs.find(
       (log) => log.memberId === memberId && log.accessGranted && !log.checkedOutAt,
@@ -1251,6 +1814,22 @@ export default function App() {
 
     if (!openAttendance) {
       return null;
+    }
+
+    if (isBackendSession) {
+      const result = await checkInApi.checkOut(memberId);
+      if (!result.ok) {
+        setApiError(result.message);
+        return null;
+      }
+
+      await refreshAttendance();
+      return {
+        ...openAttendance,
+        checkedOutAt: result.data.checkedOutAt,
+        action: "check-out",
+        reason: "Salida registrada correctamente.",
+      };
     }
 
     setAttendanceLogs((current) =>
@@ -1303,7 +1882,7 @@ export default function App() {
     });
   }
 
-  function handleRenewMembership(memberId, method, startDateOverride, planNameOverride) {
+  async function handleRenewMembership(memberId, method, startDateOverride, planNameOverride) {
     const member = members.find((item) => item.memberId === memberId);
 
     if (!member) {
@@ -1317,10 +1896,34 @@ export default function App() {
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + durationDays);
     const amount = planChanged ? plan?.price || 0 : member.subscriptionValue || plan?.price || 0;
+    const startIso = startDate.toISOString().slice(0, 10);
+    const endIso = endDate.toISOString().slice(0, 10);
+
+    if (isBackendSession) {
+      // Record the payment first (this also reactivates an expired/suspended membership),
+      // then set the exact dates and plan the UI computed.
+      const paymentResult = await financeApi.registerPayment({
+        memberId,
+        amount,
+        paymentMethod: method,
+        paidAt: startIso,
+      });
+      if (!reportApiError(paymentResult)) return;
+
+      const membershipResult = await membersApi.updateMembership(memberId, {
+        startDate: startIso,
+        endDate: endIso,
+        planName: plan?.name || member.planName || null,
+      });
+      if (!reportApiError(membershipResult)) return;
+
+      await Promise.all([refreshMembers(), refreshFinance()]);
+      return;
+    }
 
     handleUpdateMembership(memberId, {
-      startDate: startDate.toISOString().slice(0, 10),
-      endDate: endDate.toISOString().slice(0, 10),
+      startDate: startIso,
+      endDate: endIso,
       planName: plan?.name || member.planName,
       subscriptionValue: amount,
     });
@@ -1333,7 +1936,15 @@ export default function App() {
     });
   }
 
-  function handleToggleSuspend(memberId) {
+  async function handleToggleSuspend(memberId) {
+    if (isBackendSession) {
+      const result = await membersApi.toggleSuspend(memberId);
+      if (!reportApiError(result)) return;
+
+      await refreshMembers();
+      return;
+    }
+
     setMembers((current) =>
       current.map((member) => {
         if (member.memberId !== memberId) {
@@ -1349,7 +1960,23 @@ export default function App() {
     );
   }
 
-  function handleRegisterExpense(expense) {
+  async function handleRegisterExpense(expense) {
+    if (isBackendSession) {
+      const result = await financeApi.registerExpense({
+        category: expense.category,
+        description: expense.description || null,
+        amount: expense.amount,
+        expenseDate: expense.expenseDate || null,
+        paymentMethod: expense.paymentMethod || null,
+        provider: expense.provider || null,
+      });
+      if (!reportApiError(result)) return;
+
+      // Budgets track spend from expenses, so refresh operations too.
+      await Promise.all([refreshFinance(), refreshOperations()]);
+      return;
+    }
+
     setBudgets((current) =>
       current.map((budget) =>
         budget.category === expense.category
@@ -1380,12 +2007,35 @@ export default function App() {
     });
   }
 
+  if (isRestoringSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 text-sm text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+        Restaurando sesion...
+      </div>
+    );
+  }
+
   if (!currentUser) {
     return <AuthScreen users={users} onLogin={handleLogin} onRegisterGym={handleRegisterGym} />;
   }
 
   return (
     <main className="app-shell min-h-screen text-slate-950 transition-colors dark:text-slate-50">
+      {apiError ? (
+        <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-3">
+          <div className="flex w-full max-w-2xl items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 shadow-lg dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
+            <span className="flex-1">{apiError}</span>
+            <button
+              type="button"
+              onClick={() => setApiError(null)}
+              className="font-semibold text-rose-600 hover:text-rose-800 dark:text-rose-300 dark:hover:text-rose-100"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -right-40 -top-48 h-[32rem] w-[32rem] animate-float-slow rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-900/10" />
         <div className="absolute -bottom-64 left-1/3 h-[34rem] w-[34rem] animate-float rounded-full bg-cyan-100/40 blur-3xl dark:bg-cyan-950/10" />

@@ -58,9 +58,9 @@ export default function ClassSchedule({
     [classes],
   );
 
-  function reserve(event) {
+  async function reserve(event) {
     event.preventDefault();
-    const result = onReserve(selectedClass.id, selectedMemberId);
+    const result = await onReserve(selectedClass.id, selectedMemberId);
     setNotice(result);
   }
 
@@ -81,7 +81,7 @@ export default function ClassSchedule({
     }));
   }
 
-  function createClass(event) {
+  async function createClass(event) {
     event.preventDefault();
 
     if (!classForm.name.trim() || !classForm.coach.trim()) {
@@ -101,11 +101,12 @@ export default function ClassSchedule({
       duration: Number(classForm.duration),
       capacity: Number(classForm.capacity),
     };
-    const result = onCreateClassWithReservation(newClass, scheduleMemberId);
+    const result = await onCreateClassWithReservation(newClass, scheduleMemberId);
     setScheduleNotice(result);
 
     if (result?.ok) {
-      setSelectedClassId(newClass.id);
+      // The API assigns the real id; fall back to the local one for demo accounts.
+      setSelectedClassId(result.id || newClass.id);
       setClassForm({ ...initialClassForm, coach: currentUser.name });
       setScheduleMemberId("");
       setMemberQuery("");

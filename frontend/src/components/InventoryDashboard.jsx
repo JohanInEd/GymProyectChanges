@@ -62,9 +62,9 @@ export default function InventoryDashboard({
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function submitProduct(event) {
+  async function submitProduct(event) {
     event.preventDefault();
-    const result = onSaveProduct({
+    const result = await onSaveProduct({
       ...form,
       sku: form.sku.trim().toUpperCase(),
       name: form.name.trim(),

@@ -8,4 +8,5 @@ public sealed record RegisterGymRequest(
     string Email,
     string Password,
     bool AcceptTerms,
-    string InviteCode);
+    string InviteCode,
+    string? SubscriptionPlan);

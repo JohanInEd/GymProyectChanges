@@ -94,7 +94,7 @@ public sealed class DashboardController : ControllerBase
                 return new MemberSubscriptionDto(
                     subscription.MemberId,
                     subscription.Member!.FullName,
-                    subscription.Member.Email,
+                    subscription.Member.Email ?? string.Empty,
                     subscription.Plan!.Name,
                     subscription.StartDate,
                     subscription.EndDate,

@@ -8,9 +8,21 @@ public sealed class Member : ITenantScoped
     public Guid TenantId { get; set; }
     public required string FirstName { get; set; }
     public required string LastName { get; set; }
-    public required string Email { get; set; }
+    public string? Email { get; set; }
     public string? Phone { get; set; }
     public string? DocumentNumber { get; set; }
+    public string? Gender { get; set; }
+    public int? Age { get; set; }
+
+    // Current body metrics (snapshot). Historical measurements live in ProgressRecord.
+    public decimal? HeightCm { get; set; }
+    public decimal? WeightKg { get; set; }
+    public decimal? ChestCm { get; set; }
+    public decimal? ArmCm { get; set; }
+    public decimal? WaistCm { get; set; }
+    public decimal? HipCm { get; set; }
+    public decimal? LegCm { get; set; }
+
     public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

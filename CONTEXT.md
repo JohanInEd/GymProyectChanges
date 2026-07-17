@@ -8,7 +8,7 @@ Gym management SaaS with multi-tenant backend structure and a React/Tailwind adm
 
 ## Stack
 
-- Backend: C# ASP.NET Core Web API, Entity Framework Core, SQL Server structure.
+- Backend: C# ASP.NET Core Web API (net8.0), Entity Framework Core 8 + Npgsql, PostgreSQL.
 - Frontend: React + Vite + Tailwind CSS.
 - GitHub repo: `https://github.com/JohanInEd/GymProyectChanges.git`
 - Current development branch: `main`
@@ -41,7 +41,8 @@ Deployment:
 - `frontend/Dockerfile` (added July 13, 2026): multi-stage build, `node:20-alpine` runs `npm ci` + `npm run build`, then `nginx:1.27-alpine` serves the static `dist/` output. Build context = `./frontend` (same convention as `backend/Dockerfile` and `./backend`).
 - `frontend/nginx.conf`: SPA fallback (`try_files $uri $uri/ /index.html`) plus gzip for text assets. Listens on port 80.
 - `frontend/.dockerignore` excludes `node_modules`, `dist`, `.git`, env files.
-- No build-time env vars needed yet (no `import.meta.env`/`VITE_*` usage in the codebase, no router — the app switches views via in-memory tab state, not URL routes).
+- `VITE_API_BASE_URL` **is required at build time** (Vite bakes `import.meta.env.VITE_*` in at `npm run build`, not at runtime). Since July 16, 2026 the whole app depends on it, not just the invite-code check — without it a real gym cannot load any data. Locally it comes from `frontend/.env.local`; in Coolify it must be set and marked **Available at Buildtime**.
+- There is still no router — the app switches views via in-memory tab state, not URL routes. That is why the emailed password-reset / verification links use query params (`/?reset=...`), which the frontend does not read yet.
 - Verified locally (no Docker available in this dev environment): `npm ci` and `npm run build` both succeed and produce root-relative asset paths (`/assets/...`) in `dist/index.html`, matching the Nginx `root` config.
 - In Coolify this is deployed as its own application ("Front-end Server", Dockerfile build pack, Base Directory `/frontend`, Ports Exposes `80`), separate from the backend app, per the "keep it separate" decision.
 - Deployed and verified live at `https://gymassist.online` (the apex domain; moved here from the backend app on July 13, 2026 so the user-facing dashboard owns the clean domain).
@@ -51,11 +52,16 @@ Main files:
 
 - `frontend/src/App.jsx`
 - `frontend/src/auth.js`
+- `frontend/src/apiClient.js` (added July 16, 2026 — shared fetch wrapper: base URL, `Authorization: Bearer`, plain-string error handling, 401 -> logout hook)
+- `frontend/src/session.js` (added July 16, 2026 — persists `{token, user}` in `localStorage` under `gymflow-session`)
+- `frontend/src/gymApi.js` (added July 16, 2026 — every business endpoint, grouped per feature)
+- `frontend/src/adapters.js` (added July 16, 2026 — maps API DTOs onto the shapes the components already consume, so components needed no changes)
 - `frontend/src/authApi.js`
 - `frontend/src/inviteCodeApi.js`
 - `frontend/src/main.jsx`
 - `frontend/src/index.css`
 - `frontend/tailwind.config.js`
+- `frontend/.env.local` (gitignored; local dev only: `VITE_API_BASE_URL=http://localhost:5080`)
 - `frontend/src/components/AccessManagement.jsx`
 - `frontend/src/components/AnalyticsDashboard.jsx`
 - `frontend/src/components/AuthScreen.jsx`
@@ -92,8 +98,14 @@ Current UI features:
   - A 14-day trial with pending approval and pending email verification status.
   - Tenant registration and owner login persistence in `localStorage` under `gymflow-registered-gyms`.
   - Tenant-filtered user management so one gym cannot see another gym's users.
-- Registered-gym login and registration use real backend authentication (see Authentication below, added July 15, 2026): hashed passwords, a real `Gym`/`User` row in Postgres, and a JWT session. Approval status, email verification, and subscription-plan selection are still frontend-only mock bookkeeping (`registeredGyms` in `localStorage`) — only the account/credential itself is real now.
-- The four "Cuentas demo" accounts (password `Demo123!`) remain a deliberate local-only shortcut: `handleLogin` in `App.jsx` checks the local mock `users` array first (any entry with a `password` field) and only falls through to the real backend for accounts without one. They never reach Postgres and there is no backend row for them.
+- **The app now runs in two modes (July 16, 2026 — this is the single most important thing to know about `App.jsx`):**
+  - **Real gym (token-backed).** `const isBackendSession = Boolean(authToken)`. Every business feature reads and writes through the API and persists in PostgreSQL. Data survives refreshes and is shared across staff and devices. A newly registered gym starts empty (the clean workspace is now real: no rows yet, so nothing shows).
+  - **Demo accounts (local-only).** The four "Cuentas demo" (password `Demo123!`) stay exactly as before: in-memory mock data, no backend rows, lost on refresh — a deliberate shortcut. `handleLogin` checks the local mock `users` array first (any entry with a `password` field) and only falls through to the real backend for accounts without one.
+  - Every handler in `App.jsx` branches on `isBackendSession`: the backend path calls `gymApi`, then re-fetches via a `refreshX()` helper; the `else` path keeps the original local mock logic untouched.
+- Before July 16, 2026 all business data lived only in React `useState` seeded from demo constants and was lost on every page refresh. That is no longer true for real gyms — this was the main blocker to piloting.
+- Registered-gym login and registration use real backend authentication (see Authentication below): hashed passwords, a real `Gym`/`User` row in Postgres, and a JWT session. Approval status, email verification, trial and the subscription plan chosen at registration are **now real backend state** too (see SaaS billing below) — they are no longer `localStorage` mock bookkeeping.
+- **Session survives refresh** (July 16, 2026): `session.js` stores `{token, user}` in `localStorage`; on load `App.jsx` restores it, re-validates the token against `GET /api/auth/me` before trusting it, and shows a brief "Restaurando sesion..." screen meanwhile. Any 401 from the API clears the session and logs out cleanly. Demo sessions are deliberately **not** persisted (no token).
+- API failures surface in a dismissible red banner (`apiError` state + `reportApiError`), so writes rejected by the backend never fail silently.
 - Local demo authentication screen with active/inactive user validation.
 - Role-based navigation and action permissions:
   - Owner: full access, including user management.
@@ -259,6 +271,19 @@ Main backend files:
 - `backend/src/API/Controllers/SubscriptionController.cs`
 - `backend/src/API/Controllers/InviteCodesController.cs`
 - `backend/src/API/Controllers/AuthController.cs`
+- Added July 16, 2026 (all `[Authorize(Policy = "TenantStaff")]`, all tenant-scoped):
+  - `backend/src/API/Controllers/MembersController.cs` (`api/members`: list/create/update/soft-delete, `PUT {id}/membership` for dates + optional plan change, `POST {id}/suspend` toggle)
+  - `backend/src/API/Controllers/PlansController.cs` (`api/plans`: list, upsert, delete)
+  - `backend/src/API/Controllers/FinanceController.cs` (`api/finance`: `GET summary`, `POST payments`, `POST expenses`)
+  - `backend/src/API/Controllers/InventoryController.cs` (`api/products`: list, upsert, `PUT {id}/stock`, delete)
+  - `backend/src/API/Controllers/ClassesController.cs` (`api/classes`: templates CRUD, classes, reservations create/cancel)
+  - `backend/src/API/Controllers/ProgressController.cs` (`api/progress`: records/goals/notes)
+  - `backend/src/API/Controllers/OperationsController.cs` (`api/operations`: budgets/equipment/shifts)
+  - `backend/src/API/Controllers/StaffController.cs` (`api/staff`: list/create/toggle within the tenant)
+  - `backend/src/API/Controllers/GymProfileController.cs` (`api/gym`: get/update)
+  - `backend/src/API/Controllers/BillingController.cs` (`api/billing`: the gym's own SaaS subscription + invoices, read-only)
+  - `backend/src/API/Middleware/ExceptionHandlingMiddleware.cs`
+- `backend/src/API/Properties/launchSettings.json` (added July 16, 2026 — sets `ASPNETCORE_ENVIRONMENT=Development` so `dotnet run` loads user-secrets; without it the app started in Production and the connection string was missing)
 - `backend/src/API/GymSaaS.Api.csproj`
 - `backend/src/API/Program.cs`
 - `backend/src/API/appsettings.json`
@@ -267,6 +292,7 @@ Main backend files:
 - `backend/src/Application/Abstractions/ITenantProvider.cs`
 - `backend/src/Application/Abstractions/IJwtTokenService.cs`
 - `backend/src/Application/Abstractions/IInviteCodeService.cs`
+- `backend/src/Application/Abstractions/IEmailSender.cs` + `backend/src/Infrastructure/Email/ConsoleEmailSender.cs` (added July 16, 2026)
 - `backend/src/Application/DTOs/Dashboard/*`
 - `backend/src/Application/DTOs/CheckIns/*`
 - `backend/src/Application/DTOs/Subscriptions/*`
@@ -289,13 +315,22 @@ Main backend files:
 
 Backend domain entities:
 
-- `Gym`
-- `Plan`
-- `Member`
-- `Subscription`
+- `Gym` (extended July 16, 2026 with SaaS lifecycle: `SubscriptionPlan`, `ApprovalStatus`, `TrialEndsAt`, `EmailVerified`, `EmailVerifiedAt`)
+- `Plan` (+ `MaxClasses`)
+- `Member` (extended July 16, 2026: `Gender`, `Age`, and current body metrics `HeightCm`/`WeightKg`/`ChestCm`/`ArmCm`/`WaistCm`/`HipCm`/`LegCm`. **`Email` is now nullable** — the client form marks Correo optional. The unique index `(TenantId, Email)` is kept as-is because Postgres treats NULLs as distinct, so several members may have no email.)
+- `Subscription` (a **member's membership**; do not confuse with `SaasSubscription`)
 - `Payment`
 - `Attendance`
 - `InviteCode` (not tenant-scoped, no `ITenantScoped`/query filter — must be checkable before any Gym/tenant exists)
+- `User` (not tenant-scoped, same reasoning)
+- Added July 16, 2026 — all `ITenantScoped` with a tenant query filter:
+  - `Expense` (finance expenses; there was no expense entity before)
+  - `Product` (inventory)
+  - `ClassTemplate` (the catalog registered in Configuracion), `GymClass` (a concrete scheduled class), `Reservation`
+  - `ProgressRecord`, `ProgressGoal`, `ProgressNote`
+  - `Budget` (monthly limit per category; "spent" is derived from `Expense` rows, not stored), `Equipment`, `Shift`
+  - `SaasSubscription` + `SaasInvoice` (see SaaS billing below)
+- `UserToken` (added July 16, 2026 — not tenant-scoped; single-use expiring tokens for password reset and email verification. Only the SHA-256 hash is stored; the raw token exists only in the emailed link.)
 
 Multi-tenant structure:
 
@@ -325,6 +360,25 @@ Authentication (added July 15, 2026):
   ```
   (or whatever their local Postgres credentials are). This is machine-local, never committed. Production is unaffected — Coolify already fully overrides `ConnectionStrings:DefaultConnection` via its own environment variable, as before.
 
+Account lifecycle, added July 16, 2026 (all on `AuthController`, anonymous + rate-limited unless noted):
+
+- `GET /api/auth/me` (`[Authorize]`, `[DisableRateLimiting]`) -> current `AuthUserDto` from the token. The frontend calls it on load to re-validate a restored session before trusting it.
+- `POST /api/auth/forgot-password` `{ email }` -> always 200 with the same generic message, whether or not the email exists (so it cannot be used to discover which emails are registered). If the user exists, a `UserToken` (`PasswordReset`, 1h expiry) is created and a reset link is emailed.
+- `POST /api/auth/reset-password` `{ token, password }` -> validates the token (unused, unexpired), re-hashes the password, marks the token used.
+- `POST /api/auth/verify-email` `{ token }` -> marks `Gym.EmailVerified`/`EmailVerifiedAt`.
+- `register-gym` now also: stores the chosen `SubscriptionPlan` (the frontend collected it but **never sent it** before), sets `ApprovalStatus = Pending`, `TrialEndsAt = now + 14d`, creates the trial `SaasSubscription`, and emails an email-verification link (sent **after** the transaction commits, never inside it).
+- Tokens are 32 random bytes, hex-encoded; only their SHA-256 hash is stored.
+- **Login is deliberately NOT gated on approval or email verification** — a pilot gym must be able to work immediately. The status is stored and displayed ("Registro recibido, aprobacion pendiente"), not enforced. Flipping that to a hard gate is a one-line policy change in `Login`.
+- `IEmailSender` (`Application/Abstractions/IEmailSender.cs`) with `ConsoleEmailSender` (`Infrastructure/Email/`) which **logs the email instead of sending it**. No real provider is wired yet: pick one (Resend/SendGrid/SES/SMTP) and register a different `IEmailSender` in `DependencyInjection`. Until then, password-reset and verification links only appear in the backend log.
+- `Frontend:BaseUrl` config (in `appsettings*.json`) builds the emailed links: `{BaseUrl}/?reset=TOKEN` and `{BaseUrl}/?verify=TOKEN`. **The frontend does not yet read those query params** — the backend side is done, the UI to consume the links is not.
+
+SaaS billing (added July 16, 2026):
+
+- `SaasSubscription` — how a **gym pays us** (the platform). Named this way on purpose: `Subscription` already means a member's membership at a gym, and the two would be confused. Kept as rows rather than fields on `Gym` so plan changes and renewals have history. Fields: `PlanType`, `StartDate`, `EndDate`, `Status` (`Trial`/`Active`/`PastDue`/`Cancelled`).
+- `SaasInvoice` — invoices issued to a gym: `Amount` (decimal), `Currency`, `IssuedAt`, `DueDate`, `PaidAt`, `Status`, `InvoiceUrl`.
+- `GET /api/billing` returns the gym's own subscription + invoices. **Read-only on purpose**: invoices are issued by the platform operator, never self-served by the customer, so there is no create/update endpoint (same reasoning as invite codes). Both entities are tenant-query-filtered, so a gym can only ever see its own.
+- Ported from the design in the user's local SQL Server `GymApp` database (`Gestion_Modelo_Saas` / `Saas_Invoices`), fixing money to `decimal(18,2)` (it was `int`/`nchar` there) and durations to real date types.
+
 Invite codes (added July 13, 2026):
 
 - `InviteCodesController` exposes `POST /api/invite-codes/validate` (read-only check, `{ code }` -> `{ isValid }`) and `POST /api/invite-codes/redeem` (`{ code }` -> `{ success, message }`, atomic `ExecuteUpdateAsync` compare-and-swap that sets `IsUsed`/`UsedAt` only if still unused). Both are intentionally anonymous (no `[Authorize]`) since they run before any account/tenant exists, and both are rate-limited (see Authentication above). The validate/redeem logic itself now lives in `IInviteCodeService`/`InviteCodeService` (`backend/src/Infrastructure/Persistence/InviteCodeService.cs`), shared with `AuthController.RegisterGym`; the controller is now a thin wrapper.
@@ -339,20 +393,91 @@ PostgreSQL structure added:
 - `DependencyInjection.cs` registers:
   - `GymSaaSDbContext`
   - PostgreSQL provider via `UseNpgsql` (package `Npgsql.EntityFrameworkCore.PostgreSQL`)
-  - `ITenantProvider`
+  - `ITenantProvider` (-> `ClaimsTenantProvider`)
   - `IMembershipStatusService`
+  - `IInviteCodeService`, `IJwtTokenService`
+  - `IEmailSender` (-> `ConsoleEmailSender`; swap this for a real provider in production)
+  - `IPasswordHasher<User>`
   - `IHttpContextAccessor`
 - `PostgresOptions` (`Infrastructure/Persistence/PostgresOptions.cs`) configures `EnableSensitiveDataLogging` and `CommandTimeoutSeconds` under the `Postgres` config section.
 - `Program.example.cs` shows how to call `AddInfrastructure(builder.Configuration)`.
-- The backend was originally built for SQL Server and was switched to PostgreSQL on July 13, 2026: package reference, `UseNpgsql`, connection string format, and the `Attendances` filtered-unique-index raw SQL in `GymSaaSDbContext.cs` (was T-SQL bracket/bit syntax `[AccessGranted] = 1`, now `"AccessGranted" = true`). No EF Core migrations exist yet, so nothing needed porting.
+- The backend was originally built for SQL Server and was switched to PostgreSQL on July 13, 2026: package reference, `UseNpgsql`, connection string format, and the `Attendances` filtered-unique-index raw SQL in `GymSaaSDbContext.cs` (was T-SQL bracket/bit syntax `[AccessGranted] = 1`, now `"AccessGranted" = true`). At that point no EF Core migrations existed yet, so nothing needed porting; the migrations listed below were all created afterwards, Postgres-first.
+
+## Local development environment (set up July 16, 2026)
+
+PostgreSQL 16.6 was installed locally on this machine using the **official portable binaries** (zip from `get.enterprisedb.com`, no installer, no admin rights):
+
+| | |
+|---|---|
+| Binaries | `D:\pgsql` (includes pgAdmin 4) |
+| Data directory | `D:\pgdata` |
+| Port | `5432` (the machine also runs SQL Server Express on 1433 — no conflict) |
+| Superuser | `postgres` — the password is **not written here on purpose** (this repo is public). It already lives in this machine's user-secrets. |
+| Database | `GymSaaS_Dev` |
+
+The connection string is stored machine-locally via user-secrets and is never committed:
+
+```bash
+# from backend/src/API — only needed once per machine, or if the cluster is recreated
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=GymSaaS_Dev;Username=postgres;Password=<local password>"
+dotnet user-secrets list   # shows the value currently configured on this machine
+```
+
+**It is NOT registered as a Windows service**, so it does not start automatically after a reboot. Start it with:
+
+```bash
+D:\pgsql\bin\pg_ctl -D D:\pgdata -l D:\pgdata\server.log start
+```
+
+(`pg_ctl -D D:\pgdata status` to check, `stop` to stop.) Registering it as a service needs admin rights and has not been done.
+
+Run the whole stack locally:
+
+```bash
+# backend (http://localhost:5080) — needs Postgres running first
+dotnet run --project backend/src/API/GymSaaS.Api.csproj
+
+# frontend (http://localhost:5173) — frontend/.env.local points it at the backend
+cd frontend && npm run dev
+```
+
+`launchSettings.json` sets `ASPNETCORE_ENVIRONMENT=Development`, which is what makes user-secrets load. Without it `dotnet run` starts in Production and fails with "Connection string 'DefaultConnection' is required."
+
+## Why PostgreSQL and not SQL Server (decided July 16, 2026)
+
+The machine also has a SQL Server Express database `GymApp` (`JOHAN\SQLEXPRESS`) with an earlier, hand-made schema: `ETGimnasio`, `ETUsuarioGym`, `ETRoles`, `ETProductos`, `ETVentas`, `ETDetalleVentas`, `PMPagos`, `PMPlanesMembresia`, `Gestion_Modelo_Saas`, `Saas_Invoices`. **The decision is to stay on PostgreSQL.** Reasons, for the record:
+
+- Production already runs Postgres on Coolify and is live at `gymassist.online`.
+- The backend is Npgsql-based and uses Postgres-specific SQL (the filtered unique index on `Attendances`).
+- **The project is code-first**: the C# entities + EF migrations *are* the schema; the database is generated from them. Designing tables by hand in SSMS and porting later would create two designs that diverge.
+- `Program.cs` runs `dbContext.Database.Migrate()` at startup, so a hand-created schema would break the migration history and the app would fail to start.
+- SQL Server Express caps at 10 GB per database.
+- Those tables were checked and are **empty** (only `ETGimnasio` 2 rows, `ETRoles` 1, `ETUsuarioGym` 1) — there was nothing to migrate.
+
+`GymApp` was left untouched as a **design reference**. Its ideas are being ported into the EF model instead (SaaS billing already was; product sales are still pending — see Known gaps).
+
+## Known gaps (as of July 16, 2026)
+
+- **Product sales (POS) are not implemented.** The Inventario tab says "Registra productos vendidos en la recepcion" and shows inventory value, but nothing records a sale. Needs `Sale`/`SaleItem` entities, stock decrement on sale, and the sale feeding Finanzas income. The user's SQL Server design (`ETVentas`/`ETDetalleVentas`) modelled this; it was deliberately deferred.
+- **No real email provider.** `ConsoleEmailSender` only logs; password-reset and verification emails are not delivered.
+- **Frontend does not consume the `?reset=` / `?verify=` links** the backend emails.
+- **No DB backups and no monitoring/alerting** configured on Coolify (needs the user's Coolify access).
+- `FinanceController.GetSummary` returns **all** paid payments and expenses (not truncated) because the frontend derives analytics and per-category totals from those lists; a `Take(n)` would silently skew them. This will need pagination or server-side aggregation as data grows.
+- No admin/super-user surface: invite codes and SaaS invoices are inserted straight into Postgres by the operator.
 
 Important backend note:
 
 - `GymSaaS.Api.csproj` and `Program.cs` are committed; `dotnet build` succeeds with 0 errors after the PostgreSQL switch.
 - `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable PostgreSQL server at the `DefaultConnection` string.
-- As of July 15, 2026 the frontend does call the backend for real: `POST /api/auth/login` and `POST /api/auth/register-gym` for registered-gym accounts (demo accounts remain local-only, see Authentication above). A missing database blocks real login/registration but not the rest of the app (still frontend-only mock data everywhere else).
-- An initial EF Core migration (`InitialCreate`, under `backend/src/Infrastructure/Persistence/Migrations/`) covers the original six entities; `AddInviteCodes` and `AddUsersAndGymCity` (July 15, 2026 — adds the `Users` table and `Gyms.City`) followed. `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
-- The July 15, 2026 authentication/rate-limiting/secrets changes were built and verified locally (`dotnet build`, `dotnet ef migrations has-pending-model-changes` reports none, `npm run build`, and a browser check of the demo-login and registration UI flows) but **not yet deployed** — no reachable Postgres or Docker exists in this dev sandbox, so the real login/registration round-trip against Postgres still needs verifying after deploying to Coolify (or against a local Postgres instance, after running the `dotnet user-secrets set` command above).
+- As of July 16, 2026 **every business feature of a real gym goes through the backend** (see the two-mode note under Frontend). A missing database now blocks real gyms entirely; demo accounts still work offline.
+- EF Core migrations under `backend/src/Infrastructure/Persistence/Migrations/`, in order: `InitialCreate`, `AddInviteCodes`, `AddUsersAndGymCity`, `AddBusinessEntities` (July 16 — the 11 new business tables + Member/Gym/Plan columns), `MakeMemberEmailOptional`, `AddUserTokens`, `AddSaasBilling`. Seven total. `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
+- **EF tooling quirk to know about:** `dotnet ef migrations add` with `--output-dir ../Infrastructure/Persistence/Migrations --namespace GymSaaS.Infrastructure.Persistence.Migrations` writes the migration to the right place but drops an **extra `GymSaaSDbContextModelSnapshot.cs` into `backend/src/API/GymSaaS/Infrastructure/Persistence/Migrations/`**. Two snapshots = `CS0579 Duplicate 'DbContext' attribute` and the build breaks. After every `migrations add`, copy that stray snapshot over `backend/src/Infrastructure/Persistence/Migrations/GymSaaSDbContextModelSnapshot.cs` and delete the stray `backend/src/API/GymSaaS/` folder.
+- **Verified end-to-end against a real PostgreSQL on July 16, 2026** (this replaces the earlier "not verified" caveat). Against the local Postgres described above: all 7 migrations applied cleanly (22 tables; the Postgres-syntax filtered unique index on `Attendances` created correctly), and a 33-check integration suite passed 33/33:
+  - **Multi-tenant isolation** — two gyms (Alfa, Beta) registered through the real API. Beta sees none of Alfa's members/plans/products/revenue, and — the important part — direct **cross-tenant access by id** (edit, delete, suspend, check-in, stock update using Alfa's exact ids) all return **404**, with Alfa's data left intact. The isolation comes from the `HasQueryFilter` on every `ITenantScoped` entity plus the `tenant_id` JWT claim via `ClaimsTenantProvider`.
+  - Clean workspace (a new gym starts empty), real persistence (a payment shows in that gym's revenue and not the other's), duplicate check-in blocked by the filtered unique index (409), single-use invite codes (409 on reuse), `401` without a token, and the SaaS trial subscription created at registration with the chosen plan.
+  - **Browser end-to-end:** logged into the frontend as a real Postgres-backed gym, saw its data, **hard-refreshed the page, and stayed logged in with the data intact** — the exact behaviour that was broken before.
+  - The test script lived in a temp scratchpad and was not kept in the repo. It is worth re-creating as a permanent integration test.
+- **Still not deployed.** All of the July 16 work is local-only and uncommitted; the Coolify deployment still runs the pre-July-16 code.
 - Deployment: a self-hosted Coolify instance ("Back-end Server") has this repo's `backend/` wired up as a Dockerfile-based application (Base Directory `/backend`, Ports Exposes `8080`), plus a separate PostgreSQL database resource, both running as of July 13, 2026. The real connection string/credentials live only in Coolify's Environment Variables for that app, never in this repo (the GitHub repo is public).
 - Verified live end-to-end on July 13, 2026: the migration applied automatically on deploy (all tables + indexes created, including the Postgres-syntax filtered unique index on `Attendances`), and `/api/check-ins/recent` returns `200 []` with a tenant header.
 - Domain: `https://gymassist.online` was reassigned to the frontend app (see Frontend > Deployment), so the backend now runs on Coolify's auto-generated domain, currently `http://rtd0nqdvy8gwlo6zwwrtigtr.67.207.90.99.sslip.io`. No DNS wildcard exists for `*.gymassist.online` (confirmed via `nslookup`), so a subdomain like `api.gymassist.online` would need an A record added at the registrar before it could be used here.
@@ -368,11 +493,28 @@ This repo (`GymProyectChanges.git`) history, oldest to newest:
 - `17e65d6 Switch backend from SQL Server to PostgreSQL`
 - `cb95d15 Add initial EF Core migration and frontend Docker deployment`
 - `439d5f6 Add invite-code gate for gym registration`
+- `4155c8f Add real backend authentication and harden security posture` (the July 15, 2026 work — this **is** committed; an earlier version of this file wrongly said it was still pending)
 
 Current branch for ongoing feature work:
 
-- `main`, pushed and in sync with `origin/main` up to `439d5f6` as of this note.
-- As of July 15, 2026: local changes pending commit (deliberately left uncommitted/unpushed per instruction) — the real backend authentication system, `ClaimsTenantProvider` tenant-derivation fix, rate limiting, and connection-string secrets hygiene described in the Authentication section above. Touches most backend files plus `frontend/src/App.jsx`, `frontend/src/components/AuthScreen.jsx`, `frontend/src/authApi.js` (new), `frontend/src/inviteCodeApi.js`. Run `git status --short` to see the exact set before deciding whether to commit.
+- `main`, in sync with `origin/main` up to `4155c8f` as of this note.
+- **As of July 16, 2026 there is a large uncommitted change set** (deliberately left uncommitted so far): the whole persistence layer described above. Roughly — backend: 13 new entities, 4 new migrations, 10 new controllers + their DTOs, exception/logging middleware, password reset + email verification, SaaS billing, `launchSettings.json`; frontend: `apiClient.js`, `session.js`, `gymApi.js`, `adapters.js` (all new) plus a heavily rewired `App.jsx` and small `await` fixes in `AccessManagement.jsx`, `CheckInDashboard.jsx`, `ClassSchedule.jsx`, `InventoryDashboard.jsx`. Run `git status --short` to see the exact set.
+- Nothing of this has been deployed to Coolify yet.
+
+July 16, 2026 session — turning the prototype into a real system:
+
+- The starting problem: the app looked feature-complete but **almost nothing persisted**. All business data lived in React `useState` seeded from demo constants — not even in `localStorage` — so a gym could register 50 clients and lose everything on refresh. Only auth talked to the backend, and `DashboardController`/`SubscriptionController`/`CheckInController` existed but nothing called them.
+- Built the whole missing persistence layer (entities, migrations, controllers) and rewired every frontend handler to it, keeping demo accounts local.
+- Added Tier 2 account lifecycle: password reset, email verification, `/auth/me`, global exception + request logging middleware.
+- Ported SaaS billing from the user's SQL Server design and decided to stay on PostgreSQL (see that section).
+- Installed PostgreSQL 16.6 locally and verified everything, including multi-tenant isolation (33/33).
+- Bugs/gaps found and fixed along the way:
+  - `Member.Email` was required while the client form marks Correo optional -> made nullable.
+  - The UI let you change plan when renewing, but the membership endpoint could not -> added optional `PlanName` to `UpdateMembershipRequest`.
+  - The registration form collected a SaaS plan that was **never sent** to the backend -> now sent and stored.
+  - Truncating finance lists to 10 would have silently skewed the frontend's analytics and category totals (they are derived from those lists) -> lists are returned in full.
+  - No `launchSettings.json`, so `dotnet run` used Production and never loaded user-secrets -> added.
+  - Making handlers async broke 5 component call sites that consumed their return values synchronously (`AccessManagement`, `CheckInDashboard` x2, `ClassSchedule` x2, `InventoryDashboard`) -> they now `await`. `ClassSchedule` also needed the server-assigned class id returned so it selects the right class.
 
 Most recent frontend changes:
 
@@ -451,9 +593,16 @@ In the next chat, first run:
 git status --short
 ```
 
-Then decide whether to commit and push these local changes.
+There is a large uncommitted change set from July 16, 2026 (see Git Status Notes). Decide whether to commit and push it.
 
-If the working tree is clean, continue with the next requested feature.
+## Next steps, in priority order
+
+1. **Commit and push the July 16 work**, then deploy to Coolify. Migrations apply themselves at startup, so the deploy should create the new tables automatically — but watch the deploy log the first time, since this migration is much bigger than previous ones.
+2. **Database backups + monitoring on Coolify** — needed before any real gym trusts this with their data. Not started; needs the user's Coolify access.
+3. **Pick and wire a real email provider** — until then password reset and email verification links only appear in the backend log, so those flows do not actually work for a user.
+4. **Frontend handling of `?reset=` / `?verify=` links** (the backend already emails them).
+5. **Product sales (POS)** — the Inventario tab promises it and nothing implements it.
+6. Re-create the multi-tenant isolation test as a permanent integration test in the repo.
 
 ## How To Continue In A New Chat
 
@@ -462,3 +611,5 @@ Paste this instruction:
 ```text
 Continue from D:\Original Gym\GymProyectChanges-develop. Read CONTEXT.md first, then run git status --short. Do not restart from scratch.
 ```
+
+To run the stack locally, start PostgreSQL first (`D:\pgsql\bin\pg_ctl -D D:\pgdata -l D:\pgdata\server.log start`) — it is not a Windows service and does not survive a reboot. See "Local development environment".

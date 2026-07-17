@@ -12,14 +12,14 @@ export default function AccessManagement({ users, currentUser, onCreateUser, onT
   const [form, setForm] = useState(initialForm);
   const [notice, setNotice] = useState("");
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
 
     if (!form.name.trim() || !form.email.trim() || !form.password) {
       return;
     }
 
-    const result = onCreateUser({
+    const result = await onCreateUser({
       ...form,
       name: form.name.trim(),
       email: form.email.trim().toLowerCase(),

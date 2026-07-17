@@ -147,16 +147,16 @@ export default function CheckInDashboard({
     return attendanceLogs.find((log) => log.memberId === memberId && log.accessGranted && !log.checkedOutAt);
   }
 
-  function handleCheckIn(memberId) {
-    const log = onCheckIn?.(memberId);
+  async function handleCheckIn(memberId) {
+    const log = await onCheckIn?.(memberId);
 
     if (log) {
       setLastResult(log);
     }
   }
 
-  function handleCheckOut(memberId) {
-    const log = onCheckOut?.(memberId);
+  async function handleCheckOut(memberId) {
+    const log = await onCheckOut?.(memberId);
 
     if (log) {
       setLastResult(log);
