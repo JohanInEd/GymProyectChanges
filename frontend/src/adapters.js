@@ -181,6 +181,7 @@ export function toStaffUser(dto, gymId) {
 export function toGymProfile(dto) {
   return {
     gymName: dto.gymName,
+    country: dto.country || "",
     city: dto.city || "",
     adminName: dto.adminName,
     adminEmail: dto.adminEmail,

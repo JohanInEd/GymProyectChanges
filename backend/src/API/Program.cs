@@ -83,7 +83,14 @@ app.UseHttpLogging();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+// After authorization: the tenant is already established from the signed token, so this only has to
+// decide whether that gym is still paying. Reads are never blocked.
+app.UseMiddleware<SubscriptionEnforcementMiddleware>();
 app.UseRateLimiter();
 app.MapControllers();
 
 app.Run();
+
+// Exposed so the integration tests can boot the real application through
+// WebApplicationFactory<Program> instead of re-declaring the pipeline.
+public partial class Program;

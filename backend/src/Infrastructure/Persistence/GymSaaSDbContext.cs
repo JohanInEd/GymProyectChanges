@@ -48,6 +48,7 @@ public sealed class GymSaaSDbContext : DbContext
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.Property(x => x.Email).HasMaxLength(254);
+            entity.Property(x => x.Country).HasMaxLength(80);
             entity.Property(x => x.City).HasMaxLength(120);
             entity.Property(x => x.SubscriptionPlan).HasMaxLength(60);
             entity.HasIndex(x => x.Slug).IsUnique();

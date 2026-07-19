@@ -95,13 +95,15 @@ public sealed class AuthController : ControllerBase
         CancellationToken cancellationToken)
     {
         var gymName = (request.GymName ?? string.Empty).Trim();
+        var country = (request.Country ?? string.Empty).Trim();
         var city = (request.City ?? string.Empty).Trim();
         var phone = (request.Phone ?? string.Empty).Trim();
         var ownerName = (request.OwnerName ?? string.Empty).Trim();
         var normalizedEmail = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
 
-        if (string.IsNullOrWhiteSpace(gymName) || string.IsNullOrWhiteSpace(city) ||
-            string.IsNullOrWhiteSpace(phone) || string.IsNullOrWhiteSpace(ownerName))
+        if (string.IsNullOrWhiteSpace(gymName) || string.IsNullOrWhiteSpace(country) ||
+            string.IsNullOrWhiteSpace(city) || string.IsNullOrWhiteSpace(phone) ||
+            string.IsNullOrWhiteSpace(ownerName))
         {
             return BadRequest("Todos los campos del gimnasio y el propietario son obligatorios.");
         }
@@ -151,6 +153,7 @@ public sealed class AuthController : ControllerBase
             Id = Guid.NewGuid(),
             Name = gymName,
             Slug = slug,
+            Country = country,
             City = city,
             Phone = phone,
             Email = normalizedEmail,

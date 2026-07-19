@@ -1013,6 +1013,7 @@ export default function App() {
       id: owner.gymId,
       profile: {
         gymName: form.gymName.trim(),
+        country: form.country.trim(),
         city: form.city.trim(),
         adminName: owner.name,
         adminEmail: owner.email,
@@ -1658,6 +1659,7 @@ export default function App() {
     if (isBackendSession) {
       const result = await gymProfileApi.update({
         gymName: profile.gymName,
+        country: profile.country || null,
         city: profile.city || null,
         phone: profile.adminPhone || null,
         adminName: profile.adminName || null,

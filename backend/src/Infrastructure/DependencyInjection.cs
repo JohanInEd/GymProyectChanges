@@ -2,6 +2,7 @@ using GymSaaS.Application.Abstractions;
 using GymSaaS.Application.Services;
 using GymSaaS.Domain.Entities;
 using GymSaaS.Infrastructure.Auth;
+using GymSaaS.Infrastructure.Billing;
 using GymSaaS.Infrastructure.Email;
 using GymSaaS.Infrastructure.Persistence;
 using GymSaaS.Infrastructure.Tenancy;
@@ -32,6 +33,8 @@ public static class DependencyInjection
         services.AddScoped<IMembershipStatusService, MembershipStatusService>();
         services.AddScoped<IInviteCodeService, InviteCodeService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<ISubscriptionAccessService, SubscriptionAccessService>();
+        services.Configure<BillingOptions>(configuration.GetSection("Billing"));
         services.AddScoped<IEmailSender, ConsoleEmailSender>();
         services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));

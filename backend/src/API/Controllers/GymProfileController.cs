@@ -15,11 +15,16 @@ public sealed class GymProfileController : ControllerBase
 {
     private readonly GymSaaSDbContext _dbContext;
     private readonly ITenantProvider _tenantProvider;
+    private readonly ISubscriptionAccessService _accessService;
 
-    public GymProfileController(GymSaaSDbContext dbContext, ITenantProvider tenantProvider)
+    public GymProfileController(
+        GymSaaSDbContext dbContext,
+        ITenantProvider tenantProvider,
+        ISubscriptionAccessService accessService)
     {
         _dbContext = dbContext;
         _tenantProvider = tenantProvider;
+        _accessService = accessService;
     }
 
     [HttpGet]
@@ -38,7 +43,8 @@ public sealed class GymProfileController : ControllerBase
             .OrderBy(u => u.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
-        return Ok(ToDto(gym, owner?.FullName, owner?.Email, owner?.Role));
+        var access = await _accessService.GetAccessAsync(tenantId, cancellationToken);
+        return Ok(ToDto(gym, owner?.FullName, owner?.Email, owner?.Role, access));
     }
 
     [HttpPut]
@@ -52,6 +58,7 @@ public sealed class GymProfileController : ControllerBase
         }
 
         if (!string.IsNullOrWhiteSpace(request.GymName)) gym.Name = request.GymName.Trim();
+        if (request.Country is not null) gym.Country = string.IsNullOrWhiteSpace(request.Country) ? null : request.Country.Trim();
         if (request.City is not null) gym.City = string.IsNullOrWhiteSpace(request.City) ? null : request.City.Trim();
         if (request.Phone is not null) gym.Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
 
@@ -67,12 +74,19 @@ public sealed class GymProfileController : ControllerBase
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return Ok(ToDto(gym, owner?.FullName, owner?.Email, owner?.Role));
+        var access = await _accessService.GetAccessAsync(tenantId, cancellationToken);
+        return Ok(ToDto(gym, owner?.FullName, owner?.Email, owner?.Role, access));
     }
 
-    private static GymProfileDto ToDto(Domain.Entities.Gym gym, string? adminName, string? adminEmail, Role? adminRole) =>
+    private static GymProfileDto ToDto(
+        Domain.Entities.Gym gym,
+        string? adminName,
+        string? adminEmail,
+        Role? adminRole,
+        TenantAccess access) =>
         new(
             gym.Name,
+            gym.Country,
             gym.City,
             gym.Phone,
             gym.Email,
@@ -82,5 +96,8 @@ public sealed class GymProfileController : ControllerBase
             gym.EmailVerified,
             adminName ?? string.Empty,
             adminEmail ?? string.Empty,
-            (adminRole ?? Role.Owner).ToString().ToLowerInvariant());
+            (adminRole ?? Role.Owner).ToString().ToLowerInvariant(),
+            access.IsReadOnly ? "readOnly" : "full",
+            access.Reason,
+            access.EndDate);
 }

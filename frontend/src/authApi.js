@@ -23,6 +23,7 @@ export async function login(email, password) {
 export async function registerGym(form, code) {
   const result = await api.post("/api/auth/register-gym", {
     gymName: form.gymName,
+    country: form.country,
     city: form.city,
     phone: form.phone,
     ownerName: form.ownerName,

@@ -44,16 +44,27 @@ public sealed class InventoryController : ControllerBase
             return BadRequest("El SKU y el nombre del producto son obligatorios.");
         }
 
+        // Compared case-insensitively so "ABC-1" and "abc-1" are the same product to the API, the
+        // way the inventory screen already treats them.
+        var owner = await _dbContext.Products
+            .SingleOrDefaultAsync(p => p.Sku.ToUpper() == sku.ToUpper(), cancellationToken);
+
         Product? product = null;
         if (request.Id is Guid id && id != Guid.Empty)
         {
             product = await _dbContext.Products.SingleOrDefaultAsync(p => p.Id == id, cancellationToken);
         }
 
-        product ??= await _dbContext.Products.SingleOrDefaultAsync(p => p.Sku == sku, cancellationToken);
-
         if (product is null)
         {
+            // Creating. An existing SKU is a conflict, not an instruction to overwrite: this used to
+            // fall through to the row that already had the SKU and replace its name, price, stock
+            // and minimum in place, so a mistyped code silently destroyed a different product.
+            if (owner is not null)
+            {
+                return Conflict("Ya existe un producto con este SKU.");
+            }
+
             product = new Product
             {
                 Id = Guid.NewGuid(),
@@ -64,17 +75,13 @@ public sealed class InventoryController : ControllerBase
             };
             _dbContext.Products.Add(product);
         }
-        else if (product.Sku != sku)
+        else if (owner is not null && owner.Id != product.Id)
         {
-            var skuTaken = await _dbContext.Products.AnyAsync(p => p.Sku == sku && p.Id != product.Id, cancellationToken);
-            if (skuTaken)
-            {
-                return Conflict("Ya existe un producto con este SKU.");
-            }
-
-            product.Sku = sku;
+            // Editing, and moving this product onto a SKU another product already holds.
+            return Conflict("Ya existe un producto con este SKU.");
         }
 
+        product.Sku = sku;
         product.Name = name;
         product.Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
         product.Price = request.Price;
