@@ -8,4 +8,6 @@ public sealed record AttendanceLogDto(
     bool AccessGranted,
     string Reason,
     DateTimeOffset CheckedInAt,
-    DateTimeOffset? CheckedOutAt);
+    DateTimeOffset? CheckedOutAt,
+    // Cuando es true, CheckedOutAt es el corte configurado, no una salida observada.
+    bool AutoClosed);

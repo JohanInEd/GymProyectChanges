@@ -122,6 +122,15 @@ export function toFinancialSummary(dto) {
     currentMonthExpenses: dto.currentMonthExpenses,
     currentMonthPaidPayments: dto.currentMonthPaidPayments,
     monthlyRevenue: dto.monthlyRevenue || [],
+    // Serie completa desde el primer movimiento; alimenta el filtro por año del grafico.
+    monthlyHistory: (dto.monthlyHistory || []).map((item) => ({
+      year: item.year,
+      monthNumber: item.month,
+      month: item.monthLabel,
+      revenue: item.revenue,
+      expenses: item.expenses,
+      users: item.users,
+    })),
     accountsReceivable: (dto.accountsReceivable || []).map((item) => ({
       receivableId: item.receivableId,
       memberName: item.memberName,
@@ -162,6 +171,8 @@ export function toAttendanceLog(dto) {
     accessGranted: dto.accessGranted,
     checkedAt: dto.checkedInAt,
     checkedOutAt: dto.checkedOutAt,
+    // Cuando es true, checkedOutAt es el corte configurado, no una salida real.
+    autoClosed: Boolean(dto.autoClosed),
     reason: dto.reason,
   };
 }

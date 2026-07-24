@@ -3,6 +3,7 @@ using System;
 using GymSaaS.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace GymSaaS.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(GymSaaSDbContext))]
-    partial class GymSaaSDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260720005420_AddAttendanceAutoClosed")]
+    partial class AddAttendanceAutoClosed
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -988,9 +991,6 @@ namespace GymSaaS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
 
-                    b.Property<int>("FailedLoginAttempts")
-                        .HasColumnType("integer");
-
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -998,9 +998,6 @@ namespace GymSaaS.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
-
-                    b.Property<DateTimeOffset?>("LockoutEndsAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()

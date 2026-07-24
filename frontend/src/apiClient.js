@@ -46,8 +46,19 @@ async function request(method, path, body) {
   }
 
   if (response.status === 401) {
-    unauthorizedHandler?.();
-    return { ok: false, status: 401, message: "Tu sesion expiro. Inicia sesion de nuevo." };
+    // A 401 while we hold a token means an active session went invalid -> log out.
+    // A 401 without a token is a failed login (or other anonymous call): surface the
+    // server's own plain-string message ("Correo o contrasena incorrectos.") instead
+    // of the misleading "session expired", and do not trigger the logout hook.
+    if (authToken) {
+      unauthorizedHandler?.();
+      return { ok: false, status: 401, message: "Tu sesion expiro. Inicia sesion de nuevo." };
+    }
+    return {
+      ok: false,
+      status: 401,
+      message: typeof data === "string" && data ? data : "Correo o contrasena incorrectos.",
+    };
   }
 
   if (!response.ok) {

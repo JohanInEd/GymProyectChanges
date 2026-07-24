@@ -24,25 +24,6 @@ const initialClassTemplateForm = {
   room: "",
 };
 
-const featureSuggestions = [
-  {
-    title: "Recordatorios automaticos",
-    description: "Enviar avisos antes del vencimiento por WhatsApp, correo o SMS.",
-  },
-  {
-    title: "Control de acceso avanzado",
-    description: "Conectar torniquetes, QR o tarjetas al registro de entrada.",
-  },
-  {
-    title: "Pagos y cartera",
-    description: "Ver pagos pendientes, comprobantes, abonos y recaudo por plan.",
-  },
-  {
-    title: "Progreso del cliente",
-    description: "Guardar medidas, peso, fotos y rutinas para ver evolucion mensual.",
-  },
-];
-
 function Field({ label, children }) {
   return (
     <label className="space-y-1 text-sm">
@@ -662,18 +643,6 @@ export default function GymSetup({
             <p>{gymProfile.adminName}</p>
             <p>{gymProfile.adminEmail}</p>
             <p>{gymProfile.adminRole}</p>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Sugerencias de funciones</h2>
-          <div className="mt-4 space-y-3">
-            {featureSuggestions.map((feature) => (
-              <div key={feature.title} className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-950 dark:text-white">{feature.title}</h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{feature.description}</p>
-              </div>
-            ))}
           </div>
         </div>
       </aside>

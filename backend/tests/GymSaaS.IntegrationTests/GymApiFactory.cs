@@ -42,6 +42,13 @@ public sealed class GymApiFactory : WebApplicationFactory<Program>
     public string Audience => Configuration["Jwt:Audience"]
         ?? throw new InvalidOperationException("Jwt:Audience is not configured.");
 
+    /// <summary>
+    /// The account-lockout threshold the running application actually resolved, so the lockout tests
+    /// do not hard-code a number that a later appsettings change could drift away from.
+    /// </summary>
+    public int MaxFailedLoginAttempts =>
+        int.TryParse(Configuration["AccountLockout:MaxFailedAttempts"], out var value) ? value : 5;
+
     private IConfiguration Configuration => Services.GetRequiredService<IConfiguration>();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)

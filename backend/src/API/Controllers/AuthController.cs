@@ -7,12 +7,14 @@ using GymSaaS.Application.Abstractions;
 using GymSaaS.Application.DTOs.Auth;
 using GymSaaS.Domain.Entities;
 using GymSaaS.Domain.Enums;
+using GymSaaS.Infrastructure.Auth;
 using GymSaaS.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace GymSaaS.API.Controllers;
 
@@ -28,6 +30,7 @@ public sealed class AuthController : ControllerBase
     private readonly IPasswordHasher<User> _passwordHasher;
     private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
+    private readonly AccountLockoutOptions _lockoutOptions;
 
     public AuthController(
         GymSaaSDbContext dbContext,
@@ -35,7 +38,8 @@ public sealed class AuthController : ControllerBase
         IJwtTokenService jwtTokenService,
         IPasswordHasher<User> passwordHasher,
         IEmailSender emailSender,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IOptions<AccountLockoutOptions> lockoutOptions)
     {
         _dbContext = dbContext;
         _inviteCodeService = inviteCodeService;
@@ -43,6 +47,7 @@ public sealed class AuthController : ControllerBase
         _passwordHasher = passwordHasher;
         _emailSender = emailSender;
         _configuration = configuration;
+        _lockoutOptions = lockoutOptions.Value;
     }
 
     [HttpPost("login")]
@@ -55,13 +60,49 @@ public sealed class AuthController : ControllerBase
 
         if (user is null || !user.IsActive)
         {
+            // Same generic answer for "no such account" and "wrong password" so login cannot be
+            // used to discover which emails are registered.
             return Unauthorized("Correo o contrasena incorrectos.");
+        }
+
+        // Account lockout is per-account (persisted on the user row), independent of the IP-based
+        // rate limiter in Program.cs. If the account is currently locked, reject before checking the
+        // password so that even a correct guess during the window still fails.
+        var now = DateTimeOffset.UtcNow;
+        if (_lockoutOptions.Enabled && user.LockoutEndsAt is { } lockedUntil && lockedUntil > now)
+        {
+            var minutesLeft = (int)Math.Ceiling((lockedUntil - now).TotalMinutes);
+            return Unauthorized($"Demasiados intentos fallidos. Intenta de nuevo en {minutesLeft} minuto(s).");
         }
 
         var verification = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password ?? string.Empty);
         if (verification == PasswordVerificationResult.Failed)
         {
+            if (_lockoutOptions.Enabled)
+            {
+                user.FailedLoginAttempts++;
+                if (user.FailedLoginAttempts >= _lockoutOptions.MaxFailedAttempts)
+                {
+                    // Threshold hit: lock the account and reset the counter (the timestamp governs now).
+                    user.LockoutEndsAt = now.AddMinutes(_lockoutOptions.LockoutMinutes);
+                    user.FailedLoginAttempts = 0;
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    return Unauthorized(
+                        $"Demasiados intentos fallidos. Tu cuenta quedo bloqueada por {_lockoutOptions.LockoutMinutes} minutos.");
+                }
+
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             return Unauthorized("Correo o contrasena incorrectos.");
+        }
+
+        // A successful login clears any accumulated failures and any expired lock still on the row.
+        if (_lockoutOptions.Enabled && (user.FailedLoginAttempts != 0 || user.LockoutEndsAt is not null))
+        {
+            user.FailedLoginAttempts = 0;
+            user.LockoutEndsAt = null;
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
         return Ok(new AuthResponse(_jwtTokenService.CreateToken(user), ToDto(user)));

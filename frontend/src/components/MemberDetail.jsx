@@ -11,7 +11,7 @@ function Metric({ label, value, suffix }) {
   );
 }
 
-export default function MemberDetail({ member, onUpdateMembership }) {
+export default function MemberDetail({ member }) {
   if (!member) {
     return (
       <aside className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
@@ -49,7 +49,7 @@ export default function MemberDetail({ member, onUpdateMembership }) {
           </div>
         </div>
 
-        <MembershipCalendar member={member} onUpdateMembership={onUpdateMembership} />
+        <MembershipCalendar member={member} />
       </div>
     </aside>
   );

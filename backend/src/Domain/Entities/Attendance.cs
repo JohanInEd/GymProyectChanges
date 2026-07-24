@@ -15,6 +15,14 @@ public sealed class Attendance : ITenantScoped
     public string? RecordedByUserId { get; set; }
     public string? CheckedOutByUserId { get; set; }
 
+    /// <summary>
+    /// True when nobody recorded the exit and the system closed the visit at the configured cutoff.
+    /// The point is that <see cref="CheckedOutAt"/> then holds a cutoff, not an observed time: it
+    /// exists so the visit stops blocking the member's next entry, and it must never be read as
+    /// "this person left at this hour".
+    /// </summary>
+    public bool AutoClosed { get; set; }
+
     public Gym? Gym { get; set; }
     public Member? Member { get; set; }
     public Subscription? Subscription { get; set; }

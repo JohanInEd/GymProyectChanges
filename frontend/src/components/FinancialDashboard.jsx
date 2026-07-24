@@ -129,11 +129,29 @@ function formatTimePart(value) {
   }).format(new Date(value));
 }
 
-function getDaysOverdue(dueDate) {
+// Dias que faltan para el vencimiento; negativo si ya paso. Antes solo se contaban
+// los dias vencidos, porque una cuenta por cobrar solo podia nacer vencida. Ahora una
+// inscripcion sin pagar la crea con fecha futura y decir "vencio" seria falso.
+function getDaysUntilDue(dueDate) {
+  if (!dueDate) {
+    return null;
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = new Date(`${dueDate}T00:00:00`);
-  return Math.max(0, Math.floor((today - due) / 86400000));
+  if (Number.isNaN(due.getTime())) {
+    return null;
+  }
+
+  return Math.floor((due - today) / 86400000);
+}
+
+function describeDueDate(daysUntilDue) {
+  if (daysUntilDue === null) return "";
+  if (daysUntilDue < 0) return `${Math.abs(daysUntilDue)} dias vencido`;
+  if (daysUntilDue === 0) return "Vence hoy";
+  return `Faltan ${daysUntilDue} dias`;
 }
 
 function PaymentStatusBadge({ status }) {
@@ -584,6 +602,23 @@ function ExpenseForm({ onCancel, onSubmit }) {
   );
 }
 
+function ChartRangeButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`h-8 rounded-full border px-3 text-xs font-semibold transition ${
+        active
+          ? "border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
+          : "border-gray-300 bg-white text-gray-600 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-gray-500"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function FinancialDashboard({
   summary,
   currency = "USD",
@@ -600,6 +635,8 @@ export default function FinancialDashboard({
 }) {
   const [activeAction, setActiveAction] = useState(initialAction);
   const [notice, setNotice] = useState("");
+  // "recent" = la ventana movil de 6 meses de siempre; un numero = ese año completo.
+  const [chartRange, setChartRange] = useState("recent");
 
   useEffect(() => {
     if (initialAction) {
@@ -614,6 +651,7 @@ export default function FinancialDashboard({
     currentMonthExpenses: 0,
     currentMonthPaidPayments: 0,
     monthlyRevenue: [],
+    monthlyHistory: [],
     accountsReceivable: [],
     recentExpenses: [],
     recentPayments: [],
@@ -627,15 +665,56 @@ export default function FinancialDashboard({
     return { receivable, profit, delta, deltaPercentage };
   }, [data]);
 
-  const chartData = useMemo(
-    () =>
-      data.monthlyRevenue.map((item, index) => ({
+  const monthlyHistory = data.monthlyHistory || [];
+
+  // Un año solo se ofrece si tiene algun movimiento registrado: un boton que abre
+  // un grafico en blanco no le dice nada a nadie.
+  const availableYears = useMemo(() => {
+    const years = new Set();
+    monthlyHistory.forEach((point) => {
+      if (point.revenue > 0 || point.expenses > 0) {
+        years.add(point.year);
+      }
+    });
+    return [...years].sort((a, b) => b - a);
+  }, [monthlyHistory]);
+
+  // Si el año seleccionado deja de existir (un refresco que ya no lo trae), vuelve
+  // a la vista por defecto en lugar de quedarse en un grafico vacio.
+  useEffect(() => {
+    if (chartRange !== "recent" && !availableYears.includes(chartRange)) {
+      setChartRange("recent");
+    }
+  }, [availableYears, chartRange]);
+
+  const chartData = useMemo(() => {
+    if (chartRange === "recent") {
+      return data.monthlyRevenue.map((item, index) => ({
         ...item,
         expenses: item.expenses || 0,
         users: index === data.monthlyRevenue.length - 1 ? memberCount : item.users || 0,
-      })),
-    [data.monthlyRevenue, memberCount],
-  );
+        isCurrent: index === data.monthlyRevenue.length - 1,
+      }));
+    }
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonthNumber = now.getMonth() + 1;
+
+    return monthlyHistory
+      .filter((point) => point.year === chartRange)
+      .map((point) => {
+        const isCurrent = point.year === currentYear && point.monthNumber === currentMonthNumber;
+        return {
+          month: point.month,
+          revenue: point.revenue,
+          expenses: point.expenses || 0,
+          // El mes en curso usa el conteo vivo de miembros, igual que la vista de 6 meses.
+          users: isCurrent ? memberCount : point.users || 0,
+          isCurrent,
+        };
+      });
+  }, [chartRange, data.monthlyRevenue, monthlyHistory, memberCount]);
 
   const categoryExpenseTotals = useMemo(() => {
     const now = new Date();
@@ -822,14 +901,33 @@ export default function FinancialDashboard({
             <div>
               <h2 className="text-base font-semibold text-gray-950 dark:text-white">Ingresos, gastos y usuarios</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Relacion mensual entre el movimiento financiero y los usuarios registrados.
+                {chartRange === "recent"
+                  ? "Relacion mensual entre el movimiento financiero y los usuarios registrados."
+                  : `Movimiento mensual registrado durante ${chartRange}.`}
               </p>
             </div>
-            <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800 dark:bg-green-900/40 dark:text-green-200">
-              {totals.deltaPercentage >= 0 ? "+" : ""}
-              {totals.deltaPercentage.toFixed(1)}%
-            </span>
+            {/* La variacion compara el mes actual contra el anterior, asi que solo tiene
+                sentido en la vista reciente: sobre un año pasado se leeria como suya. */}
+            {chartRange === "recent" ? (
+              <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800 dark:bg-green-900/40 dark:text-green-200">
+                {totals.deltaPercentage >= 0 ? "+" : ""}
+                {totals.deltaPercentage.toFixed(1)}%
+              </span>
+            ) : null}
           </div>
+
+          {availableYears.length > 0 ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <ChartRangeButton active={chartRange === "recent"} onClick={() => setChartRange("recent")}>
+                Ultimos 6 meses
+              </ChartRangeButton>
+              {availableYears.map((year) => (
+                <ChartRangeButton key={year} active={chartRange === year} onClick={() => setChartRange(year)}>
+                  {year}
+                </ChartRangeButton>
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-4 text-xs font-medium text-gray-600 dark:text-gray-300">
             <span className="inline-flex items-center gap-2">
@@ -904,13 +1002,11 @@ export default function FinancialDashboard({
             </svg>
 
             <div className="absolute inset-x-2 bottom-0 flex gap-3">
-              {chartData.map((item, index) => (
+              {chartData.map((item) => (
                 <div
                   key={`${item.month}-label`}
                   className={`min-w-0 flex-1 py-2 text-center text-xs font-medium ${
-                    index === chartData.length - 1
-                      ? "text-sky-700 dark:text-sky-300"
-                      : "text-gray-500 dark:text-gray-400"
+                    item.isCurrent ? "text-sky-700 dark:text-sky-300" : "text-gray-500 dark:text-gray-400"
                   }`}
                 >
                   {item.month}
@@ -1061,20 +1157,38 @@ export default function FinancialDashboard({
             {data.accountsReceivable.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No hay saldos pendientes.</p>
             ) : (
-              data.accountsReceivable.map((receivable) => (
-                <div key={receivable.receivableId} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-gray-950 dark:text-white">{receivable.memberName}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {receivable.planName} · Vencio {formatDate(receivable.dueDate)}
-                    </p>
+              data.accountsReceivable.map((receivable) => {
+                const daysUntilDue = getDaysUntilDue(receivable.dueDate);
+                const isOverdue = daysUntilDue !== null && daysUntilDue < 0;
+
+                return (
+                  <div key={receivable.receivableId} className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-gray-950 dark:text-white">{receivable.memberName}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {receivable.planName}
+                        {receivable.dueDate ? ` · ${isOverdue ? "Vencio" : "Vence"} ${formatDate(receivable.dueDate)}` : ""}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={`text-sm font-semibold ${
+                          isOverdue ? "text-red-700 dark:text-red-300" : "text-amber-700 dark:text-amber-300"
+                        }`}
+                      >
+                        {formatCurrency(receivable.amount, currency)}
+                      </p>
+                      <p
+                        className={`text-xs ${
+                          isOverdue ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"
+                        }`}
+                      >
+                        {describeDueDate(daysUntilDue)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold text-red-700 dark:text-red-300">{formatCurrency(receivable.amount, currency)}</p>
-                    <p className="text-xs text-red-600 dark:text-red-400">{getDaysOverdue(receivable.dueDate)} dias vencido</p>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

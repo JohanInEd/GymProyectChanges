@@ -327,21 +327,17 @@ export default function CheckInDashboard({
           <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
             <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-900/70 dark:text-gray-300">
               <tr>
-                <th className="px-4 py-3">Entrada</th>
-                <th className="px-4 py-3">Salida</th>
                 <th className="px-4 py-3">Cliente</th>
                 <th className="px-4 py-3">Plan</th>
                 <th className="px-4 py-3">Resultado</th>
                 <th className="px-4 py-3">Motivo</th>
+                <th className="px-4 py-3">Entrada</th>
+                <th className="px-4 py-3">Salida</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {attendanceLogs.slice(0, 8).map((log) => (
                 <tr key={log.id} className="bg-white dark:bg-gray-800">
-                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{formatDateTime(log.checkedAt)}</td>
-                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
-                    {log.checkedOutAt ? formatDateTime(log.checkedOutAt) : log.accessGranted ? "Dentro" : "-"}
-                  </td>
                   <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{log.fullName}</td>
                   <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{log.planName}</td>
                   <td className="px-4 py-3">
@@ -354,6 +350,26 @@ export default function CheckInDashboard({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{log.reason}</td>
+                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{formatDateTime(log.checkedAt)}</td>
+                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
+                    {log.autoClosed ? (
+                      // No se muestra la hora a proposito: es el corte configurado, no una salida
+                      // observada, y presentarla como hora real seria inventar el dato.
+                      <span
+                        className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400"
+                        title="Nadie registro la salida. El sistema cerro la visita automaticamente."
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                        Cierre automatico
+                      </span>
+                    ) : log.checkedOutAt ? (
+                      formatDateTime(log.checkedOutAt)
+                    ) : log.accessGranted ? (
+                      "Dentro"
+                    ) : (
+                      "-"
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

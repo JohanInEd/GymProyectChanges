@@ -104,11 +104,11 @@ Current UI features:
   - Tenant-filtered user management so one gym cannot see another gym's users.
 - **The app now runs in two modes (July 16, 2026 — this is the single most important thing to know about `App.jsx`):**
   - **Real gym (token-backed).** `const isBackendSession = Boolean(authToken)`. Every business feature reads and writes through the API and persists in PostgreSQL. Data survives refreshes and is shared across staff and devices. A newly registered gym starts empty (the clean workspace is now real: no rows yet, so nothing shows).
-  - **Demo accounts (local-only).** The four "Cuentas demo" (password `Demo123!`) stay exactly as before: in-memory mock data, no backend rows, lost on refresh — a deliberate shortcut. `handleLogin` checks the local mock `users` array first (any entry with a `password` field) and only falls through to the real backend for accounts without one.
+  - **Demo accounts (local-only).** The four "Cuentas demo" (password `Demo123!`) are in-memory mock data, no backend rows, lost on refresh — a deliberate shortcut. `handleLogin` checks the local mock `users` array first (any entry with a `password` field) and only falls through to the real backend for accounts without one. **(July 20, 2026: the one-click demo picker was removed from the login screen — see "Login screen: demo picker removed" below — but this login path is unchanged; a demo account still works by typing its email and `Demo123!`.)**
   - Every handler in `App.jsx` branches on `isBackendSession`: the backend path calls `gymApi`, then re-fetches via a `refreshX()` helper; the `else` path keeps the original local mock logic untouched.
 - Before July 16, 2026 all business data lived only in React `useState` seeded from demo constants and was lost on every page refresh. That is no longer true for real gyms — this was the main blocker to piloting.
 - Registered-gym login and registration use real backend authentication (see Authentication below): hashed passwords, a real `Gym`/`User` row in Postgres, and a JWT session. Approval status, email verification, trial and the subscription plan chosen at registration are **now real backend state** too (see SaaS billing below) — they are no longer `localStorage` mock bookkeeping.
-- **Session survives refresh** (July 16, 2026): `session.js` stores `{token, user}` in `localStorage`; on load `App.jsx` restores it, re-validates the token against `GET /api/auth/me` before trusting it, and shows a brief "Restaurando sesion..." screen meanwhile. Any 401 from the API clears the session and logs out cleanly. Demo sessions are deliberately **not** persisted (no token).
+- **Session survives refresh** (July 16, 2026): `session.js` stores `{token, user}` in `localStorage`; on load `App.jsx` restores it, re-validates the token against `GET /api/auth/me` before trusting it, and shows a brief "Restaurando sesion..." screen meanwhile. A 401 from the API while a session token is held clears the session and logs out cleanly (July 20, 2026: a 401 during login, with no token, is treated as bad credentials instead — see "Login screen: demo picker removed and failed-login message fixed"). Demo sessions are deliberately **not** persisted (no token).
 - API failures surface in a dismissible red banner (`apiError` state + `reportApiError`), so writes rejected by the backend never fail silently.
 - Local demo authentication screen with active/inactive user validation.
 - Role-based navigation and action permissions:
@@ -121,7 +121,7 @@ Current UI features:
   - Activating and deactivating accounts.
   - Permission summaries per role.
   - Protection against deactivating the current user.
-- Demo accounts use password `Demo123!` (local-only, see above — not a real backend account).
+- Demo accounts use password `Demo123!` (local-only, see above — not a real backend account). **The one-click demo picker was removed from the login screen on July 20, 2026; demo login now requires typing the email and this password.**
 - Classes tab includes:
   - A "Programar clase" panel with a member picker on the left (name search, avatar, name, email, single selection) and the class form on the right (trainer, date, time, duration, capacity, room), separated by a vertical divider.
   - The Clase field is a select fed by the class catalog registered in Configuracion; choosing one auto-fills trainer, duration, capacity, and room (all still editable), while date and time stay manual.
@@ -200,7 +200,7 @@ Current UI features:
 - Client creation form with:
   - Personal info section, ordered Nombre, Genero, Edad, Peso, Altura, Telefono, Correo (Correo is optional).
   - Biometria section: Pecho, Brazo, Cintura, Cadera, Pierna.
-  - Membresia section: the plans the gym registered in Configuracion, plus a subscription value field that auto-fills from the chosen plan.
+  - Membresia section: the plans the gym registered in Configuracion, plus the cobro block added July 19, 2026 — a **read-only** "Valor a pagar" derived from the chosen plan's price (July 20, 2026: no longer editable), an optional **"Aplicar descuento" percentage** that recalculates it, a medio de pago (Efectivo/Transferencia/Tarjeta) and a Pagado/Pendiente toggle that decides whether the amount becomes income or a receivable. See "The client registration now charges" and "Client registration charge: fixed to the plan price, with an optional discount".
   - Submit button reads "Finalizar registro" and sits under the Membresia section.
   - All field and section titles render in uppercase.
 - Client creation plan choices come from the gym's own registered plans (`GET /api/plans`), not a fixed list. **A brand-new gym therefore cannot create a client until it registers a plan first**: the Membresia section shows "No hay planes registrados. Crea uno en Configuracion para poder asignarlo aqui." Verified in the browser on July 18, 2026. (An earlier note in this file claimed a fixed Diario/Semanal/Mensual/Anual/VIP list — that is out of date.)
@@ -234,6 +234,7 @@ Current UI features:
   - `Validar entrada` is disabled for expired or suspended plans and while the client has an active entry.
   - Per-row `Validar salida` closes the active visit and enables a future entry.
   - Only one active entry is allowed per client; the Estado cell shows "Dentro desde" with the entry time.
+  - A visit nobody closed is retired automatically after 12 hours and the history shows "Cierre automatico" in the Salida column instead of an invented time (July 19, 2026 — see "Forgotten check-outs close themselves").
   - An inline banner above the table confirms the last entry/exit result with the member name and timestamp.
   - A `Revisar pago` button appears only on expired or suspended rows, and only for roles with finance permission; it navigates to Finanzas, auto-opens the Registrar pago panel, and pre-fills the search with that member's name.
   - Blocked entries record reason "Plan vencido" or "Plan suspendido".
@@ -250,7 +251,7 @@ Current UI features:
   - `Revisar` button: opens `Mensualidad` tab and filters by `Por vencer`.
   - `Quitar` button: dismisses alert from the screen.
 - Membership detail includes a mini calendar:
-  - Editable start and end date inputs.
+  - Start and end dates shown as **read-only** text (July 20, 2026 — were editable inputs before; the direct edit from the profile was removed, date changes now go through renewal).
   - Previous / next month controls.
   - Full subscription range highlighted in sequence.
   - Used subscription days marked teal.
@@ -259,7 +260,7 @@ Current UI features:
   - End date marked red.
   - Today marked with dark ring.
   - Shows remaining days, total subscription length, and progress.
-  - Date edits recalculate days remaining, membership status, badge color, filters, and alerts.
+  - Changing the dates (now via the renewal flow, not this read-only profile calendar) recalculates days remaining, membership status, badge color, filters, and alerts.
 - Human silhouette component was removed.
 
 ## Backend
@@ -340,7 +341,7 @@ Multi-tenant structure:
 - `GymSaaSDbContext` includes global query filters using `ITenantProvider`.
 - `ClaimsTenantProvider` (replaced `HeaderTenantProvider` on July 15, 2026) reads tenant id from the `tenant_id` claim on the authenticated JWT — no longer trusts a client-supplied header. `HeaderTenantProvider.cs` was deleted; the `Tenant:HeaderName` config entry was removed.
 - `Attendance` records allowed and blocked check-in attempts per tenant/member.
-- `Attendance` stores entry and optional exit timestamps for allowed visits.
+- `Attendance` stores entry and optional exit timestamps for allowed visits, plus `AutoClosed` (July 19, 2026) for visits the system closed because nobody recorded the exit — see "Forgotten check-outs close themselves".
 - `CheckInController` exposes `POST /api/check-ins`, `POST /api/check-ins/check-out`, and `GET /api/check-ins/recent`; `RecordedByUserId`/`CheckedOutByUserId` are now populated from the authenticated principal (`ClaimTypes.NameIdentifier`), not client-supplied request fields.
 - The backend rejects a second active entry and has a filtered unique index per tenant/member.
 
@@ -354,7 +355,7 @@ Authentication (added July 15, 2026):
   - `POST /api/auth/register-gym`: `{ gymName, city, phone, ownerName, email, password, acceptTerms, inviteCode }` -> `{ token, user }`. Wraps invite-code redemption (via `IInviteCodeService`, shared with `InviteCodesController`) and `Gym`+owner `User` creation in one DB transaction; slug is auto-generated from the gym name plus a random suffix.
 - JWTs are signed HMAC-SHA256, carry `sub`/`ClaimTypes.NameIdentifier` (user id), `tenant_id` (custom claim, read by `ClaimsTenantProvider`), `ClaimTypes.Role`, email, and name. Config lives under `Jwt:*` (`Issuer`, `Audience`, `SigningKey`, `ExpiryMinutes`) in `appsettings*.json`, same override-via-environment-variable convention as the DB connection string. Default expiry is 720 minutes (12h); no refresh tokens — the frontend keeps the token in memory only (lost on refresh, same as before) and the user re-logs in.
 - The `"TenantStaff"` authorization policy now requires an authenticated user (`RequireAuthenticatedUser()`).
-- Rate limiting (added July 15, 2026): all anonymous, credential-guessable endpoints (`AuthController`'s login/register-gym, `InviteCodesController`'s validate/redeem) carry `[EnableRateLimiting("auth")]` — a fixed-window limiter, 10 requests/minute per client IP, configured in `Program.cs` via `AddRateLimiter`/`UseRateLimiter`. Rejections return 429 with a plain-string JSON body the frontend already knows how to surface.
+- Rate limiting (added July 15, 2026): all anonymous, credential-guessable endpoints (`AuthController`'s login/register-gym, `InviteCodesController`'s validate/redeem) carry `[EnableRateLimiting("auth")]` — a fixed-window limiter, 10 requests/minute per client IP, configured in `Program.cs` via `AddRateLimiter`/`UseRateLimiter`. Rejections return 429 with a plain-string JSON body the frontend already knows how to surface. Complemented since July 23, 2026 by a **per-account** login lockout that is independent of IP (see "Account lockout: per-account brute-force protection" below) — the rate limiter throttles a noisy client, the lockout stops a distributed guess against one account.
 - **Local dev secrets**: `appsettings.json`/`appsettings.Development.json` no longer contain a `Password=` in `ConnectionStrings:DefaultConnection` (removed July 15, 2026 — a real-shaped credential sitting in a committed file, even as a placeholder, was flagged as a risk in a security review). The project now has `UserSecretsId` set (`GymSaaS.Api.csproj`); each developer must run, once, from `backend/src/API`:
   ```
   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=GymSaaS_Dev;Username=postgres;Password=postgres"
@@ -406,7 +407,7 @@ PostgreSQL structure added:
 
 ## Automated tests (added July 18, 2026)
 
-Location: `backend/tests/GymSaaS.IntegrationTests/` — 42 xUnit integration tests. See that folder's
+Location: `backend/tests/GymSaaS.IntegrationTests/` — 59 xUnit integration tests. See that folder's
 `README.md` for the full picture; the essentials:
 
 - They boot the **real** application via `WebApplicationFactory<Program>` (real JWT bearer auth, the
@@ -422,9 +423,11 @@ Location: `backend/tests/GymSaaS.IntegrationTests/` — 42 xUnit integration tes
   header ignored), the EF model itself by reflection (every `ITenantScoped` entity has a filter that
   really uses `TenantId`; no new `IgnoreQueryFilters()`), anonymous-endpoint allow-list,
   registration/invite-code rules (including that the country is required and stored),
-  subscription enforcement, and the duplicate-SKU rules.
+  subscription enforcement, the duplicate-SKU rules, the charge taken at client registration, and
+  per-account login lockout (independent of the caller's IP).
 - Test files: `TenantIsolationTests`, `AuthenticationBoundaryTests`, `TenantFilterConfigurationTests`,
-  `RegistrationTests`, `AnonymousEndpointTests`, `SubscriptionEnforcementTests`, `InventorySkuTests`.
+  `RegistrationTests`, `AnonymousEndpointTests`, `SubscriptionEnforcementTests`, `InventorySkuTests`,
+  `MemberRegistrationPaymentTests`, `AttendanceAutoCloseTests`, `AccountLockoutTests`.
 - **Verified to actually fail**: removing the `HasQueryFilter` from `Member` turns 8 tests red,
   naming the entity and the operations that became possible. Worth repeating after any change to the
   isolation mechanism — a suite that has never failed proves nothing.
@@ -444,7 +447,7 @@ read across tenants use `.IgnoreQueryFilters()` explicitly.
 
 `.github/workflows/ci.yml` runs on every push and pull request:
 
-- **backend**: `postgres:16` service container, Release build, the 29 integration tests, results
+- **backend**: `postgres:16` service container, Release build, the integration tests, results
   uploaded as an artifact. Uses `GYMSAAS_TEST_CONNECTION`; no user-secrets involved.
 - **frontend**: `npm ci` + `npm run build`, mirroring the Dockerfile.
 
@@ -558,6 +561,183 @@ Note the same upsert-by-natural-key pattern still exists for **plans** (deduped 
 templates** (deduped by name). Those were deliberate and are far less destructive than the product
 case, but they carry the same shape of risk if a name is reused.
 
+## The client registration now charges (July 19, 2026)
+
+Registering a client assigned them a value that **was not income anywhere**. `MembersController.Create`
+created the `Member` and the `Subscription` but never a `Payment`, and `SubscriptionValue` was only
+used by `ResolvePlanAsync` to set the plan's price when the plan was new or priced at 0. Meanwhile
+the chart reads `monthlyRevenue`, which sums only `Payment` rows with `Status == Paid`. So the money
+never appeared and reception had to capture the same client and the same amount a second time in
+Finanzas. Renewing already charged (`handleRenewMembership` calls `registerPayment` first) — only the
+initial registration didn't, which is what made it feel like double work.
+
+Now the registration takes the charge, in the same `SaveChangesAsync` as the member and the
+membership, so either all three exist or none do:
+
+- **Pagado** creates a `Paid` payment: it lands in the month's income, the chart bar and "Pagos
+  recientes" immediately.
+- **Pendiente** creates a `Pending` payment: it goes to "Cartera por cobrar" and deliberately does
+  **not** touch income. This was chosen over always assuming payment because a client who enrols
+  today and pays on Friday is normal, and there is no endpoint to delete a payment invented by
+  mistake.
+- **The amount is editable**, pre-filled from the plan. `SubscriptionValue` stays the plan's list
+  price and the new `PaymentAmount` is what was actually charged, so a discount for one client never
+  rewrites what the plan costs everyone else.
+- A charge with no plan, a non-positive amount, or an unknown status is rejected with **400 before
+  anything is written** — a refused charge must not leave a member stranded without it.
+- Omitting `PaymentStatus` charges nothing, so the previous request shape still behaves as it did.
+
+**This is the first time "Cartera por cobrar" can hold anything.** It was dead UI (always $0, always
+empty) because `FinanceController.RegisterPayment` hard-codes `Status = Paid` and nothing else
+created payments. That is still true, so the gap is narrower, not closed: a *renewal* that has not
+been paid still cannot be recorded. Registering a receivable at enrolment is now possible; doing it
+later is not.
+
+Because receivables could never exist, their row in `FinancialDashboard` had never actually been
+rendered, and it hard-coded "Vencio {fecha}" / "N dias vencido". A registration debt is due in the
+*future*, so it read "Vencio 19 de ago de 2026 · 0 dias vencido". It now says "Vence"/"Faltan N dias"
+in amber while pending and switches to "Vencio"/"N dias vencido" in red once overdue.
+
+Files: `CreateMemberRequest` (3 new optional fields), `MembersController.Create`,
+`components/ClientForm.jsx` (the cobro block), `App.jsx` `handleCreateMember` — which now also calls
+`refreshFinance()`, without which the backend charge would not reach the chart until a reload — and
+`components/FinancialDashboard.jsx` for the receivable row.
+
+Covered by `MemberRegistrationPaymentTests` (9 cases). **Verified to actually fail:** disabling the
+payment block turns exactly 4 of them red (revenue, receivables, the discount, and cross-tenant
+isolation of the new income) while the validation tests stay green.
+
+Verified in the browser against the real backend and local Postgres on a freshly registered gym: a
+paid registration put $120.000 into Ingresos, the July bar and "Pagos recientes" without opening
+Finanzas; a pending one with a $90.000 discounted amount went to "Cartera por cobrar" and left
+Ingresos untouched at $120.000.
+
+**Worth knowing:** if reception also registers the payment in Finanzas out of habit, the income
+doubles — there is no idempotency check. The form states what it will do and the payment shows up
+immediately in "Pagos recientes", which is the only thing standing between the user and a double
+count today.
+
+## Forgotten check-outs close themselves (July 19, 2026)
+
+A visit whose exit nobody recorded used to stay open forever, and that was **not cosmetic**: the
+filtered unique index on `Attendances` (`"AccessGranted" = true AND "CheckedOutAt" IS NULL`) makes
+`CheckIn` return 409, so **the member could not enter again**. The only cure, "Validar salida", is
+offered only while the visit is still inside the 50 records the screen loads
+(`getOpenAttendance` searches `attendanceLogs`, filled by `checkInApi.recent(50)`). In a busy gym
+that is a day or two; after that the UI showed "Validar entrada" enabled, the click failed with the
+raw English 409 (*"The selected member already has an active check-in"*), and there was **no way to
+fix it from the interface at all**. "Personas dentro" also stayed inflated forever.
+
+This was already happening: when this was implemented, `GymSaaS_Dev` held three open visits, two of
+them abandoned since July 16 and 17.
+
+The rule, in `Infrastructure/CheckIns/`:
+
+- **A visit open for more than 12 hours is closed automatically.** Configurable via
+  `CheckIn:AutoCloseAfterHours`; `CheckIn:AutoCloseStaleVisits=false` is the kill switch.
+- **Why elapsed hours and not "end of day", which is the conceptually right rule:** the system does
+  not store the gym's time zone anywhere. Everything is UTC, so a literal end-of-day cut would fire
+  at 7pm Colombian time, with the gym full — worse than the bug. Twelve hours behaves like "the next
+  day" and is time-zone independent. Doing it properly needs `TimeZone` on `Gym` first.
+- **Why not just derive it at read time**, the way subscription expiry is derived: the index is
+  enforced by PostgreSQL, so while the row still has `CheckedOutAt IS NULL` the next entry stays
+  blocked no matter what the API computes. The row has to change. It is therefore written **lazily,
+  when it matters** — inside `CheckIn` before the conflict check, and inside `GetRecent` so the
+  counter is right as soon as the screen loads. Still no scheduler, same as everywhere else here.
+- **The exit time is not invented.** `Attendance.AutoClosed` (new column, `AddAttendanceAutoClosed`
+  migration, defaults false so existing rows are untouched) marks these, and `CheckedOutAt` holds
+  *entry + 12h* — the cutoff — not the moment the sweep happened. A sweep running three days later
+  must not claim the person left three days later. The UI shows **"Cierre automatico"** in the Salida
+  column instead of a time, precisely so nobody reads a cutoff as an observation. If average stay
+  time is ever computed, these rows must be excluded.
+
+Files: `Domain/Entities/Attendance.cs`, `Application/Abstractions/IAttendanceMaintenanceService.cs`,
+`Infrastructure/CheckIns/{CheckInOptions,AttendanceMaintenanceService}.cs`, `CheckInController`,
+`AttendanceLogDto`, the `CheckIn` section in `appsettings.json`; frontend `adapters.js` and
+`CheckInDashboard.jsx`.
+
+Covered by `AttendanceAutoCloseTests` (6 tests). **Verified to actually fail:** setting
+`AutoCloseStaleVisits=false` turns exactly 3 red (the blocked re-entry, the marking, and the
+inflated counter) while the three that guard *live* visits stay green — which also proves the kill
+switch works.
+
+Verified in the browser on the QA gym: entry recorded, "Personas dentro 1"; the visit backdated 20h
+in Postgres to simulate the forgotten exit; on reloading the screen the counter went to 0, the log
+row read "Cierre automatico", and the member could **check in again normally** — the 409 that used
+to be a dead end.
+
+## Login screen: demo picker removed and failed-login message fixed (July 20, 2026)
+
+Two changes to the authentication screen (`AuthScreen.jsx`):
+
+**The "Cuentas demo" picker was removed.** The four quick-select demo buttons and the
+"Selecciona una cuenta... Contrasena demo: Demo123!" line are gone. The demo **login logic itself is
+untouched**: `handleLogin` in `App.jsx` still checks the local mock `users` array first, so a demo
+account still works by typing its email and `Demo123!` — there is just no longer a one-click picker on
+the login screen. Removing it made `useDemo`, the `getRoleLabel` import and the `users` prop dead, so
+they were dropped from `AuthScreen` (and the `users` prop from the `AuthScreen` render in `App.jsx`).
+
+**A failed login showed the wrong message.** `apiClient.js` treated *every* 401 as an expired
+session: a wrong password on the login screen showed "Tu sesion expiro. Inicia sesion de nuevo."
+(confusing — the user never had a session) and also fired the logout hook. Now the 401 handler
+branches on whether a token is held: a 401 **with** a token is a real session expiry (logout, same as
+before); a 401 **without** a token is a failed login (or other anonymous call) and surfaces the
+backend's own plain-string body ("Correo o contrasena incorrectos.") without triggering logout. The
+backend already returned that same message for both a wrong password and an unknown email (so it never
+reveals which emails are registered); that message now actually reaches the user. The connection-error
+text ("No se pudo conectar con el servidor") is now only shown for a genuinely unreachable backend.
+
+Files: `components/AuthScreen.jsx`, `apiClient.js`, `App.jsx`. Verified in the browser against the real
+backend and local Postgres.
+
+## Membership dates are read-only in the client profile (July 20, 2026)
+
+The mini-calendar in the client profile (`MembershipCalendar.jsx`, rendered by `MemberDetail`) had
+**editable** `Inicio`/`Fin` date inputs that wrote straight to `PUT /api/members/{id}/membership` on
+change. Editing a membership's dates from that profile view was not intended, so the two inputs are now
+**read-only display text** (formatted with the component's `formatDate`), with no date picker.
+
+The rest of the calendar (month navigation, the highlighted range, the legend) is unchanged.
+**Legitimate date changes still happen** through the renewal flow (`handleUpdateMembership` in
+`App.jsx`, still called by `handleRenewMembership`) — only the direct edit from the profile was
+removed. The now-unused `onUpdateMembership` prop was dropped from `MembershipCalendar` and
+`MemberDetail`, and from the `MemberDetail` render in `App.jsx`; the `handleUpdateMembership` handler
+itself stays because renewal uses it.
+
+Files: `components/MembershipCalendar.jsx`, `components/MemberDetail.jsx`, `App.jsx`.
+
+## Client registration charge: fixed to the plan price, with an optional discount (July 20, 2026)
+
+The cobro block added July 19 (see "The client registration now charges") let the receptionist **type
+any amount** into "Valor a pagar". That free-text field was replaced by a **read-only** value plus an
+explicit discount control:
+
+- "Valor a pagar" is now **read-only**, derived from the selected plan's price — no longer a free
+  number input.
+- A **"Aplicar descuento" checkbox** reveals a percentage field (0-100). The value recalculates live as
+  `round(planPrice * (1 - percent/100))`, with the original list price shown struck-through and the
+  helper text spelling out the discount ("Incluye 10% de descuento sobre $ 60.000.").
+- The percentage is clamped to 0-100; 100% enrols the client free (no payment row), 0% / no discount
+  charges the full price.
+
+**Why read-only + a discount toggle instead of a free field:** the free field could hold *any* number
+unrelated to the plan, which made a typo silent and a discount indistinguishable from a fat-finger. A
+percentage off the plan price is what a discount actually is, and it keeps the plan price as the anchor.
+
+This maps onto the **existing backend model with no backend change**: `paymentAmount` is the discounted
+amount actually charged (what reaches Finanzas / the receivable), while `subscriptionValue` stays the
+plan's list price — so a discount for one client never rewrites what the plan costs everyone else (the
+same separation "The client registration now charges" already relied on). The amount is now a
+**derived value**, not React state, so it cannot desync from the plan and discount; the old `form.amount`
+field was removed.
+
+Files: `components/ClientForm.jsx`. Verified in the browser (Johan Gym Summit, Mensual $60.000 + 10% ->
+$54.000 with $60.000 struck through, helper text correct); the registration was **not** submitted, to
+avoid seeding a throwaway member into a real gym.
+
+**Note:** this covers only the **initial registration**. A *renewal* still charges the plan price via
+`handleRenewMembership` with no discount UI — extending the discount there is a separate change.
+
 ## Security fix: SubscriptionController deleted (July 18, 2026)
 
 The `IgnoreQueryFilters()` scan in the new test suite found a real hole. `SubscriptionController` was
@@ -577,6 +757,49 @@ Deleted along with the 6 files it was the only consumer of: `Application/Payment
 history if online card payments are rebuilt later — which should be done deliberately, not inherited
 from a prototype. `AnonymousEndpointTests` now guards the general case: every endpoint reachable
 without a token must be on a reviewed allow-list **and** be rate-limited.
+
+## Account lockout: per-account brute-force protection (July 23, 2026)
+
+The only defence against password guessing used to be the IP-based rate limiter
+(`[EnableRateLimiting("auth")]`, 10/min per IP). That does nothing against a **distributed** guess —
+one account, many IPs — and it punishes a whole gym behind one office IP for one person's fat
+fingers. Login now also locks a **single account** after too many failures, tracked on the user row
+so it is **independent of the caller's IP**. The two controls are complementary, not a replacement.
+
+- Two new columns on `Users` (`AddUserLoginLockout` migration): `FailedLoginAttempts` (int, default
+  0) and `LockoutEndsAt` (nullable `timestamptz`). Existing rows get `0` / `NULL`.
+- `AuthController.Login`: a wrong password increments the counter; on reaching the threshold the
+  account is locked (`LockoutEndsAt = now + LockoutMinutes`) and the counter reset. **While locked,
+  even the correct password is refused** — the lock check runs *before* the password check, so a
+  lucky guess during the window still fails. A successful login clears the counter and any stale lock.
+- **Configurable, with a kill switch**, bound to the `AccountLockout` section (`AccountLockoutOptions`,
+  next to `JwtOptions`): `MaxFailedAttempts` (5), `LockoutMinutes` (15), `Enabled` (true). Set
+  `Enabled=false` to disable without a deploy if it ever misfires on a real customer — same
+  escape-hatch pattern as `Billing:EnforceSubscription`. Named `AccountLockoutOptions` on purpose:
+  `LockoutOptions` collides with `Microsoft.AspNetCore.Identity.LockoutOptions`, which is in scope
+  wherever the password hasher is (a plain `LockoutOptions` fails to build with `CS0104`).
+
+**Tradeoffs, chosen deliberately:**
+
+- **Mild user enumeration.** A locked account returns a distinct "Demasiados intentos" message, so an
+  attacker who has already guessed wrong `MaxFailedAttempts` times learns the account exists. Standard,
+  and gated behind that many failures plus the IP limiter; kept because the alternative (a generic
+  message even when the correct password is being refused) is worse for the real user, who then has no
+  idea why the right password does not work.
+- **Lockout is a DoS on the victim.** Anyone who knows an email can lock it for `LockoutMinutes` by
+  failing on purpose. Inherent to any account lockout; mitigated by keeping the window short and
+  self-expiring, and the lock never *extends* on further attempts while already locked.
+
+Files: `Domain/Entities/User.cs`, `Infrastructure/Auth/AccountLockoutOptions.cs` (new),
+`Infrastructure/DependencyInjection.cs`, `API/Controllers/AuthController.cs`, `API/appsettings.json`,
+migration `20260724001303_AddUserLoginLockout` (the id is UTC, so it reads one day ahead of this
+section's local date).
+
+Covered by `AccountLockoutTests` (2 tests): the account locks after the threshold **even when every
+attempt comes from a different IP** (proven via the test factory's random-per-request client IP — see
+`GymApiFactory.ClientIpStartupFilter`), and a successful login before the threshold resets the
+counter. **Verified to actually fail:** flipping `AccountLockout:Enabled` to `false` turns the lockout
+test red. All 59 integration tests pass against the local Postgres.
 
 ## Local development environment (set up July 16, 2026)
 
@@ -617,6 +840,10 @@ cd frontend && npm run dev
 ```
 
 `launchSettings.json` sets `ASPNETCORE_ENVIRONMENT=Development`, which is what makes user-secrets load. Without it `dotnet run` starts in Production and fails with "Connection string 'DefaultConnection' is required."
+
+## Operator scripts
+
+`scripts/list-users.sh` (added July 19, 2026) lists the registered staff/owner accounts grouped by gym (email, name, role, active, created), with optional `GYM=` / `EMAIL=` substring filters. Same `DATABASE_URL` (+ optional `PG_BIN`) convention as the backup script. **It does not — and cannot — show passwords:** only the one-way PBKDF2 `PasswordHash` is stored (ASP.NET Core `PasswordHasher`), so there is no plaintext to read; a locked-out user is helped via `POST /api/auth/forgot-password`, never by reading or setting their password. The file ends with a copy-paste `psql` one-liner for running it straight from the Coolify Postgres terminal (where `$POSTGRES_USER`/`$POSTGRES_DB` are already set), since the classifier blocks typing into that terminal from here.
 
 ## Backups
 
@@ -665,7 +892,7 @@ The machine also has a SQL Server Express database `GymApp` (`JOHAN\SQLEXPRESS`)
 
 Found July 18, 2026 while simulating a real gym (12 clients, 27 payments, attendance, classes, inventory, operations) and then exercising every create/edit/delete path:
 
-- **"Cartera por cobrar" can never be populated.** `FinanceController.RegisterPayment` hard-codes `Status = PaymentStatus.Paid`, and no other endpoint creates a `Payment`. So the "Cartera pendiente" summary card, the receivables list and its overdue-days column are dead UI: always $0, always empty. A gym that lets members pay late — which is normal — has no way to record it. Needs an endpoint (or a flag on the existing one) that creates a `Pending` payment.
+- ~~**"Cartera por cobrar" can never be populated.**~~ — **partly fixed July 19, 2026**: registering a client can now create a `Pending` payment (see "The client registration now charges"). What is still missing is recording a debt *after* enrolment: `FinanceController.RegisterPayment` still hard-codes `Status = PaymentStatus.Paid`, so an unpaid **renewal** has no way to be registered. Needs a flag on that endpoint.
 - **A backdated payment grants extra days.** `RegisterPayment` accepts and stores `PaidAt`, but renews from `today`: a payment dated 20 days ago for a membership that ended 28/06 pushed the new end date to 17/08 (today + 30) instead of 28/07 (payment date + 30). A receptionist catching up on paperwork silently extends memberships.
 - ~~Registering a product with an existing SKU silently overwrote that product~~ — **fixed the same day**, see below.
 - The 6-month chart's "users" line counts members by `CreatedAt`, so imported or newly seeded members all land in the current month and history reads as zero. Correct for a gym that grows over time; misleading if data is ever migrated in.
@@ -684,7 +911,7 @@ Important backend note:
 - `GymSaaS.Api.csproj` and `Program.cs` are committed; `dotnet build` succeeds with 0 errors after the PostgreSQL switch.
 - `dotnet run --project backend/src/API/GymSaaS.Api.csproj` starts Kestrel successfully, but DB-backed endpoints (e.g. `/api/check-ins/recent`) return 500 without a reachable PostgreSQL server at the `DefaultConnection` string.
 - As of July 16, 2026 **every business feature of a real gym goes through the backend** (see the two-mode note under Frontend). A missing database now blocks real gyms entirely; demo accounts still work offline.
-- EF Core migrations under `backend/src/Infrastructure/Persistence/Migrations/`, in order: `InitialCreate`, `AddInviteCodes`, `AddUsersAndGymCity`, `AddBusinessEntities` (July 16 — the 11 new business tables + Member/Gym/Plan columns), `MakeMemberEmailOptional`, `AddUserTokens`, `AddSaasBilling`, `AddGymCountry` (July 18 — `Gyms.Country`, nullable, so gyms registered earlier simply have NULL). Eight total. `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
+- EF Core migrations under `backend/src/Infrastructure/Persistence/Migrations/`, in order: `InitialCreate`, `AddInviteCodes`, `AddUsersAndGymCity`, `AddBusinessEntities` (July 16 — the 11 new business tables + Member/Gym/Plan columns), `MakeMemberEmailOptional`, `AddUserTokens`, `AddSaasBilling`, `AddGymCountry` (July 18 — `Gyms.Country`, nullable, so gyms registered earlier simply have NULL), `AddAttendanceAutoClosed` (July 19 — `Attendances.AutoClosed`, boolean, defaults false), `AddUserLoginLockout` (July 23 — `Users.FailedLoginAttempts` int default 0 and `Users.LockoutEndsAt` nullable timestamptz, for the per-account login lockout). Ten total. `Program.cs` runs `dbContext.Database.Migrate()` at startup so deploys apply pending migrations automatically, no manual step needed.
 - **EF tooling quirk to know about:** `dotnet ef migrations add` with `--output-dir ../Infrastructure/Persistence/Migrations --namespace GymSaaS.Infrastructure.Persistence.Migrations` writes the migration to the right place but drops an **extra `GymSaaSDbContextModelSnapshot.cs` into `backend/src/API/GymSaaS/Infrastructure/Persistence/Migrations/`**. Two snapshots = `CS0579 Duplicate 'DbContext' attribute` and the build breaks. After every `migrations add`, copy that stray snapshot over `backend/src/Infrastructure/Persistence/Migrations/GymSaaSDbContextModelSnapshot.cs` and delete the stray `backend/src/API/GymSaaS/` folder.
 - **Verified end-to-end against a real PostgreSQL on July 16, 2026** (this replaces the earlier "not verified" caveat). Against the local Postgres described above: all 7 migrations applied cleanly (22 tables; the Postgres-syntax filtered unique index on `Attendances` created correctly), and a 33-check integration suite passed 33/33:
   - **Multi-tenant isolation** — two gyms (Alfa, Beta) registered through the real API. Beta sees none of Alfa's members/plans/products/revenue, and — the important part — direct **cross-tenant access by id** (edit, delete, suspend, check-in, stock update using Alfa's exact ids) all return **404**, with Alfa's data left intact. The isolation comes from the `HasQueryFilter` on every `ITenantScoped` entity plus the `tenant_id` JWT claim via `ClaimsTenantProvider`.
@@ -715,8 +942,26 @@ This repo (`GymProyectChanges.git`) history, oldest to newest:
 
 Current branch for ongoing feature work:
 
-- **`feat/real-persistence-tier1-tier2`**, at `ebd71cd`. Not `main` — an earlier version of this file said `main`.
-- Uncommitted as of July 18, 2026 — one large change set, all from that day:
+- **`main`**, at `09e0503 Add integration tests, CI, subscription enforcement and registration fields`.
+  (An earlier version of this file said `feat/real-persistence-tier1-tier2` at `ebd71cd` with the
+  July 18 work uncommitted — that is out of date: it **was** committed as `09e0503`.)
+- Uncommitted as of July 19, 2026 — two features from that day plus this CONTEXT.md update:
+  - **Charge at client registration**: `CreateMemberRequest`, `MembersController`, `ClientForm.jsx`,
+    `App.jsx`, `FinancialDashboard.jsx`, `MemberRegistrationPaymentTests.cs`.
+  - **Automatic close of forgotten check-outs**: `Attendance.cs`,
+    `IAttendanceMaintenanceService.cs`, `Infrastructure/CheckIns/*`, `CheckInController`,
+    `AttendanceLogDto`, `DependencyInjection`, `appsettings.json`, the
+    `AddAttendanceAutoClosed` migration, `adapters.js`, `CheckInDashboard.jsx`,
+    `AttendanceAutoCloseTests.cs`.
+  - `scripts/list-users.sh`, still untracked.
+- Uncommitted as of July 20, 2026 — four UI changes from that day (all frontend, no backend/schema):
+  - **Login screen**: demo picker removed and the failed-login message fixed. `components/AuthScreen.jsx`,
+    `apiClient.js`, `App.jsx`.
+  - **Membership dates read-only in the client profile**: `components/MembershipCalendar.jsx`,
+    `components/MemberDetail.jsx`, `App.jsx`.
+  - **Client registration charge fixed to the plan price + optional discount**: `components/ClientForm.jsx`.
+  - This CONTEXT.md update (three new "July 20, 2026" sections above, plus inline corrections).
+- What `09e0503` contains, for reference — all from July 18, 2026:
   - **Tests + CI**: `backend/tests/GymSaaS.IntegrationTests/` (42 tests), `.github/workflows/ci.yml`,
     and `public partial class Program;` at the end of `Program.cs` so the test host can boot it.
   - **Security**: `SubscriptionController` deleted along with the 6 files it was the only consumer
@@ -728,10 +973,10 @@ Current branch for ongoing feature work:
     `GymProfileDtos` / `AuthController` / `GymProfileController`; frontend `locations.js`,
     `passwordStrength.js`, `components/SearchableSelect.jsx`, a rewritten `GymRegistrationForm.jsx`,
     plus `authApi.js`, `adapters.js` and two small `App.jsx` edits to pass the country through.
-  - This CONTEXT.md update.
+  - A CONTEXT.md update.
 
   Run `git status --short` for the exact set. The user asked to decide when to commit — ask first.
-- Nothing of this has been deployed to Coolify yet.
+- Nothing since `9a99385` has been deployed to Coolify yet.
 
 July 16, 2026 session — turning the prototype into a real system:
 
@@ -829,7 +1074,7 @@ In the next chat, first run:
 git status --short
 ```
 
-There is an uncommitted change set from July 18, 2026 (tests, CI, the SubscriptionController deletion — see Git Status Notes). The user asked to be the one who decides when to commit, so ask first.
+There is an uncommitted change set from July 19, 2026 (the charge taken at client registration, and the automatic close of forgotten check-outs) plus four frontend UI changes from July 20, 2026 (demo picker removed + login message fix, read-only membership dates in the profile, read-only "Valor a pagar" with an optional discount, and this CONTEXT.md update) — see Git Status Notes. The user asked to be the one who decides when to commit, so ask first.
 
 ## Next steps, in priority order
 
@@ -869,7 +1114,10 @@ Two things that will otherwise waste time:
 
 - **Stop the backend before building or running tests.** A running `dotnet run` locks
   `bin/Debug/net8.0/GymSaaS.Api.exe` and the build fails with MSB3027 "file is locked by".
-- **Test data in `GymSaaS_Dev`**: `Gimnasio Alfa` and `Gimnasio Beta` (July 16) and
-  `Johan Gym Summit` (the user's own, Santa Marta) are all real rows there. Invite codes are
-  single-use; free ones as of July 18 are `PRUEBA002`, `PRUEBA003`, `SMOKETEST2026`. Seed more with
+- **Test data in `GymSaaS_Dev`**: `Gimnasio Alfa` and `Gimnasio Beta` (July 16),
+  `Johan Gym Summit` (the user's own, Santa Marta) and `Gimnasio Cobro QA`
+  (`cobro.qa@gymassist.test` / `CobroQA2026!`, created July 19 to verify the registration charge —
+  it holds two throwaway members, Laura Pagada and Mario Debe) are all real rows there. Invite codes
+  are single-use; free ones as of July 19 are `PRUEBA002`, `PRUEBA003`, `SMOKETEST2026`
+  (`COBRO2026` was seeded and consumed by that QA gym). Seed more with
   `INSERT INTO "InviteCodes" ("Id","Code","IsUsed","CreatedAt") VALUES (gen_random_uuid(),'CODIGO',false,now());`

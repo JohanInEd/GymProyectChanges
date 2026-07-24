@@ -9,4 +9,5 @@ public sealed record FinanceSummaryDto(
     IReadOnlyList<ReceivableDto> AccountsReceivable,
     IReadOnlyList<FinanceRecentPaymentDto> RecentPayments,
     IReadOnlyList<ExpenseDto> RecentExpenses,
-    IReadOnlyList<CategoryExpenseTotalDto> CategoryExpenseTotals);
+    IReadOnlyList<CategoryExpenseTotalDto> CategoryExpenseTotals,
+    IReadOnlyList<MonthlyHistoryPointDto> MonthlyHistory);

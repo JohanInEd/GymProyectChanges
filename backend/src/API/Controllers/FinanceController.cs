@@ -73,6 +73,49 @@ public sealed class FinanceController : ControllerBase
             monthlyRevenue.Add(new MonthlyPointDto(MonthAbbreviations[monthStart.Month - 1], revenue, monthExpenses, users));
         }
 
+        // Historia mes a mes desde el primer movimiento registrado, para que el panel pueda
+        // filtrar por año. Se calcula aqui y no en el frontend porque la linea de usuarios
+        // cuenta todos los miembros, incluidos los dados de baja, y la lista que recibe el
+        // frontend solo trae los activos: derivarla alli daria otro numero.
+        var revenueByMonth = paidPayments
+            .Where(p => p.PaidAt != null)
+            .GroupBy(p =>
+            {
+                var utc = p.PaidAt!.Value.ToUniversalTime();
+                return (utc.Year, utc.Month);
+            })
+            .ToDictionary(g => g.Key, g => g.Sum(p => p.Amount));
+
+        var expensesByMonth = expenses
+            .GroupBy(e => (e.ExpenseDate.Year, e.ExpenseDate.Month))
+            .ToDictionary(g => g.Key, g => g.Sum(e => e.Amount));
+
+        var monthlyHistory = new List<MonthlyHistoryPointDto>();
+        var firstMovement = revenueByMonth.Keys
+            .Concat(expensesByMonth.Keys)
+            .Select(key => new DateTimeOffset(key.Year, key.Month, 1, 0, 0, 0, TimeSpan.Zero))
+            .DefaultIfEmpty(currentMonthStart)
+            .Min();
+
+        // Nunca pasa del mes actual: un movimiento con fecha futura no debe dibujar meses vacios.
+        var earliest = firstMovement < currentMonthStart ? firstMovement : currentMonthStart;
+        // Arranca en enero de ese año: al filtrar por año se espera el año completo y dos
+        // años comparables entre si, no un 2025 que empieza en marzo porque ese fue el
+        // primer pago. El año en curso se corta solo, al llegar al mes actual.
+        var historyStart = new DateTimeOffset(earliest.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        for (var month = historyStart; month <= currentMonthStart; month = month.AddMonths(1))
+        {
+            var key = (month.Year, month.Month);
+            var monthEnd = month.AddMonths(1);
+            monthlyHistory.Add(new MonthlyHistoryPointDto(
+                month.Year,
+                month.Month,
+                MonthAbbreviations[month.Month - 1],
+                revenueByMonth.TryGetValue(key, out var monthRevenue) ? monthRevenue : 0m,
+                expensesByMonth.TryGetValue(key, out var monthTotal) ? monthTotal : 0m,
+                memberCreationDates.Count(created => created < monthEnd)));
+        }
+
         var accountsReceivable = await _dbContext.Payments
             .AsNoTracking()
             .Where(p => p.Status == PaymentStatus.Pending)
@@ -127,7 +170,8 @@ public sealed class FinanceController : ControllerBase
             accountsReceivable,
             recentPayments,
             recentExpenses,
-            categoryTotals));
+            categoryTotals,
+            monthlyHistory));
     }
 
     [HttpPost("payments")]

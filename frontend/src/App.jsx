@@ -60,6 +60,29 @@ const dashboardSummary = {
       { month: "May", revenue: 15100000, expenses: 5850000, users: 3 },
       { month: "Jun", revenue: 18450000, expenses: 6350000, users: 3 },
     ],
+    // Solo para el modo demo: el backend calcula esta serie desde el primer movimiento
+    // real. Aqui se siembra un año cerrado mas el actual para que el filtro por año
+    // tenga algo que mostrar.
+    monthlyHistory: [
+      { year: 2025, monthNumber: 1, month: "Ene", revenue: 8200000, expenses: 3400000, users: 1 },
+      { year: 2025, monthNumber: 2, month: "Feb", revenue: 8750000, expenses: 3550000, users: 1 },
+      { year: 2025, monthNumber: 3, month: "Mar", revenue: 9400000, expenses: 3900000, users: 1 },
+      { year: 2025, monthNumber: 4, month: "Abr", revenue: 9100000, expenses: 4250000, users: 1 },
+      { year: 2025, monthNumber: 5, month: "May", revenue: 10300000, expenses: 4100000, users: 2 },
+      { year: 2025, monthNumber: 6, month: "Jun", revenue: 11250000, expenses: 4600000, users: 2 },
+      { year: 2025, monthNumber: 7, month: "Jul", revenue: 10800000, expenses: 4300000, users: 2 },
+      { year: 2025, monthNumber: 8, month: "Ago", revenue: 11900000, expenses: 4750000, users: 2 },
+      { year: 2025, monthNumber: 9, month: "Sep", revenue: 12400000, expenses: 4900000, users: 2 },
+      { year: 2025, monthNumber: 10, month: "Oct", revenue: 11700000, expenses: 5100000, users: 2 },
+      { year: 2025, monthNumber: 11, month: "Nov", revenue: 13050000, expenses: 5300000, users: 3 },
+      { year: 2025, monthNumber: 12, month: "Dic", revenue: 14800000, expenses: 5950000, users: 3 },
+      { year: 2026, monthNumber: 1, month: "Ene", revenue: 12600000, expenses: 4100000, users: 1 },
+      { year: 2026, monthNumber: 2, month: "Feb", revenue: 13900000, expenses: 4650000, users: 2 },
+      { year: 2026, monthNumber: 3, month: "Mar", revenue: 14250000, expenses: 4900000, users: 2 },
+      { year: 2026, monthNumber: 4, month: "Abr", revenue: 15800000, expenses: 5200000, users: 2 },
+      { year: 2026, monthNumber: 5, month: "May", revenue: 15100000, expenses: 5850000, users: 3 },
+      { year: 2026, monthNumber: 6, month: "Jun", revenue: 18450000, expenses: 6350000, users: 3 },
+    ],
     accountsReceivable: [
       {
         receivableId: "rec-001",
@@ -240,6 +263,7 @@ const emptyFinancialSummary = {
   currentMonthExpenses: 0,
   currentMonthPaidPayments: 0,
   monthlyRevenue: [],
+  monthlyHistory: [],
   accountsReceivable: [],
   recentExpenses: [],
   recentPayments: [],
@@ -562,6 +586,9 @@ export default function App() {
   const [financialSummary, setFinancialSummary] = useState(dashboardSummary.financialSummary);
   const [selectedMemberId, setSelectedMemberId] = useState(dashboardSummary.members[0]?.memberId);
   const [editingMemberId, setEditingMemberId] = useState(null);
+  // Registrar un cliente ya no cambia de pestana, asi que este aviso es la unica
+  // confirmacion de que se guardo: sin el, el formulario se limpia y no pasa nada mas.
+  const [memberCreatedNotice, setMemberCreatedNotice] = useState(null);
   const [activeTab, setActiveTab] = useState("clients");
   const [financeIntent, setFinanceIntent] = useState(null);
   const [isSettingsView, setIsSettingsView] = useState(false);
@@ -752,6 +779,14 @@ export default function App() {
       setActiveTab(navigationItems[0]?.id || "clients");
     }
   }, [activeTab, currentUser, navigationItems, settingsNavigationItems]);
+
+  // El aviso pertenece a la pantalla de Clientes; si el usuario se va y vuelve mas tarde,
+  // seguir mostrandolo haria pensar que acaba de registrar a alguien.
+  useEffect(() => {
+    if (activeTab !== "clients") {
+      setMemberCreatedNotice(null);
+    }
+  }, [activeTab]);
 
   // ---- Backend-backed workspace loading ----
   // Demo accounts stay on the local mock data; every real (token-backed) gym reads and writes
@@ -1493,22 +1528,56 @@ export default function App() {
         waistCm: member.bodyMetrics?.waistCm ?? null,
         hipCm: member.bodyMetrics?.hipCm ?? null,
         legCm: member.bodyMetrics?.legCm ?? null,
+        paymentStatus: member.paymentStatus || null,
+        paymentAmount: member.paymentAmount ?? null,
+        paymentMethod: member.paymentMethod || null,
       });
       if (!reportApiError(result)) return;
 
-      await refreshMembers();
+      // Finanzas tambien cambia: la inscripcion pudo registrar un pago o una cuenta
+      // por cobrar, y sin este refresh la grafica no se entera hasta recargar.
+      await Promise.all([refreshMembers(), refreshFinance()]);
+      // Se queda en Clientes a proposito: recepcion suele inscribir a varias personas
+      // seguidas y saltar a Mensualidad obligaba a volver atras en cada una.
       setSelectedMemberId(result.data.memberId);
-      setActiveTab("membership");
+      setMemberCreatedNotice(member.fullName);
       return;
     }
 
     setMembers((current) => [member, ...current]);
+
+    if (member.paymentAmount > 0) {
+      if (member.paymentStatus === "Paid") {
+        handleRegisterPayment({
+          memberName: member.fullName,
+          planName: member.planName,
+          amount: member.paymentAmount,
+          method: member.paymentMethod,
+        });
+      } else if (member.paymentStatus === "Pending") {
+        setFinancialSummary((current) => ({
+          ...current,
+          accountsReceivable: [
+            ...current.accountsReceivable,
+            {
+              receivableId: crypto.randomUUID(),
+              memberName: member.fullName,
+              planName: member.planName,
+              amount: member.paymentAmount,
+              dueDate: member.endDate,
+            },
+          ],
+        }));
+      }
+    }
+
     setSelectedMemberId(member.memberId);
-    setActiveTab("membership");
+    setMemberCreatedNotice(member.fullName);
   }
 
   function handleEditMember(member) {
     setEditingMemberId(member.memberId);
+    setMemberCreatedNotice(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1859,12 +1928,18 @@ export default function App() {
       const updatedMonthlyRevenue = current.monthlyRevenue.map((item, index) =>
         index === current.monthlyRevenue.length - 1 ? { ...item, revenue: updatedRevenue } : item,
       );
+      // La vista por año mira la misma cifra desde otra serie: si solo se actualizara
+      // una, los dos graficos mostrarian numeros distintos para el mismo mes.
+      const updatedMonthlyHistory = (current.monthlyHistory || []).map((item, index, list) =>
+        index === list.length - 1 ? { ...item, revenue: updatedRevenue } : item,
+      );
 
       return {
         ...current,
         currentMonthRevenue: updatedRevenue,
         currentMonthPaidPayments: current.currentMonthPaidPayments + 1,
         monthlyRevenue: updatedMonthlyRevenue,
+        monthlyHistory: updatedMonthlyHistory,
         accountsReceivable: updatedReceivables,
         recentPayments: [
           {
@@ -1992,11 +2067,15 @@ export default function App() {
       const updatedMonthlyRevenue = current.monthlyRevenue.map((item, index) =>
         index === current.monthlyRevenue.length - 1 ? { ...item, expenses: updatedExpenses } : item,
       );
+      const updatedMonthlyHistory = (current.monthlyHistory || []).map((item, index, list) =>
+        index === list.length - 1 ? { ...item, expenses: updatedExpenses } : item,
+      );
 
       return {
         ...current,
         currentMonthExpenses: updatedExpenses,
         monthlyRevenue: updatedMonthlyRevenue,
+        monthlyHistory: updatedMonthlyHistory,
         recentExpenses: [
           {
             expenseId: crypto.randomUUID(),
@@ -2018,7 +2097,7 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <AuthScreen users={users} onLogin={handleLogin} onRegisterGym={handleRegisterGym} />;
+    return <AuthScreen onLogin={handleLogin} onRegisterGym={handleRegisterGym} />;
   }
 
   return (
@@ -2313,6 +2392,25 @@ export default function App() {
               </div>
             )}
 
+            {memberCreatedNotice ? (
+              <div
+                className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+                aria-live="polite"
+              >
+                <span className="flex-1">
+                  <strong className="font-semibold">{memberCreatedNotice}</strong> quedo registrado en la base de
+                  datos de abajo. El formulario esta listo para el siguiente cliente.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMemberCreatedNotice(null)}
+                  className="font-semibold text-emerald-700 transition hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  Cerrar
+                </button>
+              </div>
+            ) : null}
+
             <div className="space-y-3">
               <div>
                 <h2 className="text-lg font-semibold text-gray-950 dark:text-white">Base de datos</h2>
@@ -2356,7 +2454,7 @@ export default function App() {
               />
             </section>
 
-            <MemberDetail member={selectedMember} onUpdateMembership={handleUpdateMembership} />
+            <MemberDetail member={selectedMember} />
           </div>
         ) : null}
 

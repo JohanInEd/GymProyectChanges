@@ -58,6 +58,31 @@ public sealed class MembersController : ControllerBase
         var tenantId = _tenantProvider.CurrentTenantId;
         var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim().ToLowerInvariant();
 
+        // El cobro se valida antes de crear nada, para no dejar a medias un miembro
+        // cuyo pago va a ser rechazado.
+        PaymentStatus? paymentStatus = null;
+        var paymentAmount = 0m;
+        if (!string.IsNullOrWhiteSpace(request.PaymentStatus))
+        {
+            if (string.IsNullOrWhiteSpace(request.PlanName))
+            {
+                return BadRequest("No se puede registrar un pago sin un plan asignado.");
+            }
+
+            if (!TryParsePaymentStatus(request.PaymentStatus, out var parsedStatus))
+            {
+                return BadRequest("El estado del pago debe ser 'Paid' o 'Pending'.");
+            }
+
+            paymentAmount = request.PaymentAmount ?? request.SubscriptionValue ?? 0m;
+            if (paymentAmount <= 0m)
+            {
+                return BadRequest("El monto del pago debe ser mayor a cero.");
+            }
+
+            paymentStatus = parsedStatus;
+        }
+
         if (email is not null)
         {
             var duplicate = await _dbContext.Members.AnyAsync(member => member.Email == email, cancellationToken);
@@ -106,6 +131,26 @@ public sealed class MembersController : ControllerBase
                 Plan = plan
             };
             _dbContext.Subscriptions.Add(subscription);
+        }
+
+        // La inscripcion cobra en el mismo paso: sin esto el valor asignado al cliente
+        // no era ingreso en ninguna parte y habia que volver a capturarlo en Finanzas.
+        // Va en el mismo SaveChanges que el miembro y la mensualidad, asi que o queda
+        // todo o no queda nada.
+        if (paymentStatus is PaymentStatus status && subscription is not null)
+        {
+            _dbContext.Payments.Add(new Payment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                MemberId = member.Id,
+                SubscriptionId = subscription.Id,
+                Amount = paymentAmount,
+                Currency = subscription.Plan?.Currency ?? "COP",
+                Status = status,
+                Provider = Clean(request.PaymentMethod),
+                PaidAt = status == PaymentStatus.Paid ? DateTimeOffset.UtcNow : null
+            });
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -289,6 +334,22 @@ public sealed class MembersController : ControllerBase
         }
 
         return plan;
+    }
+
+    private static bool TryParsePaymentStatus(string value, out PaymentStatus status)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "paid":
+                status = PaymentStatus.Paid;
+                return true;
+            case "pending":
+                status = PaymentStatus.Pending;
+                return true;
+            default:
+                status = PaymentStatus.Pending;
+                return false;
+        }
     }
 
     private static int DurationForPlanName(string name) => name.Trim().ToLowerInvariant() switch

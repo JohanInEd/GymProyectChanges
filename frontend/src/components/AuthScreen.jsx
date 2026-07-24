@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { getRoleLabel } from "../auth.js";
 import GymRegistrationForm from "./GymRegistrationForm.jsx";
 import InviteCodeGate from "./InviteCodeGate.jsx";
 
-export default function AuthScreen({ users, onLogin, onRegisterGym }) {
+export default function AuthScreen({ onLogin, onRegisterGym }) {
   const hasInviteCodeInUrl = new URLSearchParams(window.location.search).has("code");
   const [mode, setMode] = useState(hasInviteCodeInUrl ? "code" : "login");
   const [inviteCode, setInviteCode] = useState("");
@@ -20,11 +19,6 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
     if (!result.ok) {
       setError(result.message);
     }
-  }
-
-  function useDemo(user) {
-    setForm({ email: user.email, password: user.password });
-    setError("");
   }
 
   return (
@@ -136,24 +130,6 @@ export default function AuthScreen({ users, onLogin, onRegisterGym }) {
                   Registrar gimnasio
                 </button>
               </p>
-
-              <div className="mt-8 border-t border-slate-200 pt-6 dark:border-slate-800">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Cuentas demo</p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {users.filter((user) => user.active && user.isDemo).map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  onClick={() => useDemo(user)}
-                  className="rounded-xl border border-slate-200 p-3 text-left transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md hover:shadow-emerald-500/10 active:translate-y-0 dark:border-slate-700 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/20"
-                >
-                  <span className="block text-sm font-semibold">{user.name}</span>
-                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{getRoleLabel(user.role)}</span>
-                </button>
-              ))}
-            </div>
-            <p className="mt-3 text-xs text-slate-400">Selecciona una cuenta y luego inicia sesion. Contrasena demo: Demo123!</p>
-              </div>
             </>
           )}
         </section>

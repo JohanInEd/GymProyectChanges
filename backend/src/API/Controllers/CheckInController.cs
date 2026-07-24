@@ -17,11 +17,16 @@ public sealed class CheckInController : ControllerBase
 {
     private readonly GymSaaSDbContext _dbContext;
     private readonly ITenantProvider _tenantProvider;
+    private readonly IAttendanceMaintenanceService _attendanceMaintenance;
 
-    public CheckInController(GymSaaSDbContext dbContext, ITenantProvider tenantProvider)
+    public CheckInController(
+        GymSaaSDbContext dbContext,
+        ITenantProvider tenantProvider,
+        IAttendanceMaintenanceService attendanceMaintenance)
     {
         _dbContext = dbContext;
         _tenantProvider = tenantProvider;
+        _attendanceMaintenance = attendanceMaintenance;
     }
 
     private string? CurrentUserId => User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -46,6 +51,11 @@ public sealed class CheckInController : ControllerBase
         {
             return NotFound("The selected member does not exist or is inactive.");
         }
+
+        // Before deciding that this member is already inside, retire any visit nobody closed.
+        // Otherwise a forgotten exit locks them out permanently: the conflict below is backed by a
+        // unique index, and reception can only clear it while the visit is still in the recent log.
+        await _attendanceMaintenance.CloseStaleVisitsAsync(cancellationToken);
 
         var hasOpenAttendance = await _dbContext.Attendances
             .AsNoTracking()
@@ -140,6 +150,10 @@ public sealed class CheckInController : ControllerBase
         [FromQuery] int take = 25,
         CancellationToken cancellationToken = default)
     {
+        // Also swept here so "Personas dentro" and the log reflect reality as soon as anyone opens
+        // the check-in screen, without waiting for the next entry attempt.
+        await _attendanceMaintenance.CloseStaleVisitsAsync(cancellationToken);
+
         var safeTake = Math.Clamp(take, 1, 100);
         var logs = await _dbContext.Attendances
             .AsNoTracking()
@@ -157,7 +171,8 @@ public sealed class CheckInController : ControllerBase
                 attendance.AccessGranted,
                 attendance.Reason,
                 attendance.CheckedInAt,
-                attendance.CheckedOutAt))
+                attendance.CheckedOutAt,
+                attendance.AutoClosed))
             .ToListAsync(cancellationToken);
 
         return Ok(logs);

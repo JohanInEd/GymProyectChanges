@@ -49,10 +49,10 @@ function getMonthStart(value) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-const inputClass =
-  "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-950 outline-none transition focus:border-gray-900 focus:ring-2 focus:ring-gray-200 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-50 dark:focus:border-gray-200 dark:focus:ring-gray-700";
+const dateDisplayClass =
+  "flex h-10 w-full items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-950 dark:border-gray-700 dark:bg-gray-950/60 dark:text-gray-50";
 
-export default function MembershipCalendar({ member, onUpdateMembership }) {
+export default function MembershipCalendar({ member }) {
   const [visibleMonth, setVisibleMonth] = useState(() => getMonthStart(member?.startDate || new Date().toISOString().slice(0, 10)));
 
   useEffect(() => {
@@ -82,26 +82,6 @@ export default function MembershipCalendar({ member, onUpdateMembership }) {
     year: "numeric",
   }).format(visibleMonth);
 
-  function handleDateChange(field, value) {
-    if (!value || !onUpdateMembership) {
-      return;
-    }
-
-    let startDate = field === "startDate" ? value : member.startDate;
-    let endDate = field === "endDate" ? value : member.endDate;
-
-    if (parseDate(endDate) < parseDate(startDate)) {
-      if (field === "startDate") {
-        endDate = startDate;
-      } else {
-        startDate = endDate;
-      }
-    }
-
-    onUpdateMembership(member.memberId, { startDate, endDate });
-    setVisibleMonth(getMonthStart(value));
-  }
-
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
       <div className="flex flex-col gap-3 border-b border-gray-200 pb-3 sm:flex-row sm:items-start sm:justify-between dark:border-gray-700">
@@ -119,26 +99,14 @@ export default function MembershipCalendar({ member, onUpdateMembership }) {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-sm">
+        <div className="space-y-1 text-sm">
           <span className="font-medium text-gray-700 dark:text-gray-300">Inicio</span>
-          <input
-            className={inputClass}
-            type="date"
-            value={member.startDate}
-            max={member.endDate}
-            onChange={(event) => handleDateChange("startDate", event.target.value)}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
+          <p className={dateDisplayClass}>{formatDate(member.startDate)}</p>
+        </div>
+        <div className="space-y-1 text-sm">
           <span className="font-medium text-gray-700 dark:text-gray-300">Fin</span>
-          <input
-            className={inputClass}
-            type="date"
-            value={member.endDate}
-            min={member.startDate}
-            onChange={(event) => handleDateChange("endDate", event.target.value)}
-          />
-        </label>
+          <p className={dateDisplayClass}>{formatDate(member.endDate)}</p>
+        </div>
       </div>
 
       <div className="mt-4">
